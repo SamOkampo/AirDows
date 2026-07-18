@@ -15,6 +15,7 @@ class MetricsStore {
     this.pending = createEmptyMetrics();
     this.flushTimer = null;
     this.flushPromise = null;
+    this.onError = null;
     this.pool = this.enabled
       ? new Pool({
           connectionString,
@@ -51,6 +52,7 @@ class MetricsStore {
       return true;
     } catch (error) {
       console.error('[AirDows] Persistent metrics unavailable:', error.message);
+      this.reportError('connection', error);
       this.enabled = false;
       await this.pool.end().catch(() => {});
       this.pool = null;
@@ -90,6 +92,7 @@ class MetricsStore {
     } catch (error) {
       for (const field of METRIC_FIELDS) this.pending[field] += pending[field];
       console.error('[AirDows] Could not persist metrics:', error.message);
+      this.reportError('write', error);
     } finally {
       this.flushPromise = null;
       if (this.hasPendingMetrics() && !this.flushTimer) {
@@ -153,6 +156,7 @@ class MetricsStore {
       };
     } catch (error) {
       console.error('[AirDows] Could not read persisted metrics:', error.message);
+      this.reportError('read', error);
       return null;
     }
   }
@@ -161,6 +165,12 @@ class MetricsStore {
     if (this.flushTimer) clearTimeout(this.flushTimer);
     await this.flush();
     await this.pool?.end();
+  }
+
+  reportError(stage, error) {
+    if (typeof this.onError === 'function') {
+      this.onError({ stage, message: error?.message || 'Unknown database error' });
+    }
   }
 }
 

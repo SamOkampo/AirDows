@@ -74,6 +74,21 @@ que use relay TURN; al agotarse, el cliente recibe `PRO_REQUIRED`.
 diaria con métricas agregadas y el panel conserva su historial tras reinicios de Railway.
 Usa `METRICS_DATABASE_SSL=true` para una base de datos externa como Supabase o Neon.
 
+### Alertas de operación por Telegram
+
+Para recibir avisos privados, configura estas variables en Railway:
+
+```bash
+TELEGRAM_BOT_TOKEN=<token-de-BotFather>
+TELEGRAM_CHAT_ID=<chat-id-privado>
+```
+
+El panel incluye `Probar Telegram`. Las alertas automáticas tienen un enfriamiento de una hora
+y se disparan con al menos 20 muestras cuando los fallos superan 10%, el relay supera 35%, cada
+5 bloqueos Free, o cuando PostgreSQL no está disponible. Los umbrales son configurables mediante
+`ALERT_MIN_SAMPLES`, `ALERT_FAILURE_PERCENT`, `ALERT_RELAY_PERCENT`, `ALERT_PRO_REQUIRED_COUNT`
+y `ALERT_COOLDOWN_MS`.
+
 ---
 
 ## 📱 How to Use (Local Network Transfer)

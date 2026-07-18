@@ -40,9 +40,18 @@ const FREE_RELAY_BUDGET_BYTES = Math.max(
 const MAX_RELAY_USAGE_REPORT_BYTES = 8 * 1024 * 1024;
 const ADMIN_DASHBOARD_TOKEN = process.env.ADMIN_DASHBOARD_TOKEN || '';
 const METRICS_DATABASE_URL = process.env.METRICS_DATABASE_URL || process.env.DATABASE_URL || '';
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
+const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
+const ALERT_MIN_SAMPLES = readEnvNumber('ALERT_MIN_SAMPLES', 20, 1, 10_000);
+const ALERT_FAILURE_PERCENT = readEnvNumber('ALERT_FAILURE_PERCENT', 10, 1, 100);
+const ALERT_RELAY_PERCENT = readEnvNumber('ALERT_RELAY_PERCENT', 35, 1, 100);
+const ALERT_PRO_REQUIRED_COUNT = readEnvNumber('ALERT_PRO_REQUIRED_COUNT', 5, 1, 10_000);
+const ALERT_COOLDOWN_MS = readEnvNumber('ALERT_COOLDOWN_MS', 60 * 60 * 1000, 60_000, 24 * 60 * 60 * 1000);
 
 let cachedIceConfig = null;
 let cachedIceConfigExpiresAt = 0;
+const alertState = new Map();
+let lastProRequiredAlertCount = 0;
 
 const apiLimiter = rateLimit({
   windowMs: 60 * 1000,
@@ -51,6 +60,42 @@ const apiLimiter = rateLimit({
   legacyHeaders: false,
   message: 'Too many requests from this IP. Please try again in a minute.'
 });
+
+function readEnvNumber(name, fallback, min, max) {
+  const value = Number.parseInt(process.env[name] || '', 10);
+  return Number.isFinite(value) && value >= min && value <= max ? value : fallback;
+}
+
+function isTelegramConfigured() {
+  return Boolean(TELEGRAM_BOT_TOKEN && TELEGRAM_CHAT_ID);
+}
+
+async function sendTelegramAlert(key, title, details, options = {}) {
+  if (!isTelegramConfigured()) return { sent: false, reason: 'not-configured' };
+
+  const now = Date.now();
+  const lastSentAt = alertState.get(key) || 0;
+  if (!options.force && now - lastSentAt < ALERT_COOLDOWN_MS) {
+    return { sent: false, reason: 'cooldown' };
+  }
+
+  alertState.set(key, now);
+  const message = ['AirDows Alert', title, details, `UTC: ${new Date().toISOString()}`].join('\n');
+
+  try {
+    const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text: message })
+    });
+    if (!response.ok) throw new Error(`Telegram API status ${response.status}`);
+    console.info(`[AirDows] Telegram alert sent: ${key}`);
+    return { sent: true };
+  } catch (error) {
+    console.error(`[AirDows] Telegram alert failed (${key}):`, error.message);
+    return { sent: false, reason: 'delivery-failed' };
+  }
+}
 
 function getStaticTurnIceServers() {
   const iceServers = [];
@@ -221,6 +266,7 @@ function recordNetworkHealth(payload) {
     relayChunks: relayEstimatedBytes > 0 ? metric.relayChunks : 0,
     relayEstimatedBytes
   });
+  evaluateOperationalAlerts();
 
   if (networkHealthStats.samples % 25 === 0) {
     console.info('[AirDows] Network health aggregate', networkHealthStats);
@@ -245,6 +291,14 @@ function emitProRequired(socket) {
   budget.blocked = true;
   networkHealthStats.proRequiredEvents += 1;
   metricsStore.record({ proRequiredEvents: 1 });
+  if (networkHealthStats.proRequiredEvents - lastProRequiredAlertCount >= ALERT_PRO_REQUIRED_COUNT) {
+    lastProRequiredAlertCount = networkHealthStats.proRequiredEvents;
+    sendTelegramAlert(
+      'relay-budget',
+      'Límites Free alcanzados',
+      `${networkHealthStats.proRequiredEvents} sesiones alcanzaron el límite relay en esta ejecución.`
+    ).catch(() => {});
+  }
   socket.emit('pro-required', {
     code: 'PRO_REQUIRED',
     plan: 'free',
@@ -268,6 +322,31 @@ function getSessionMetricTotals() {
     proRequiredEvents: networkHealthStats.proRequiredEvents,
     startedAt: networkHealthStats.startedAt
   };
+}
+
+function evaluateOperationalAlerts() {
+  const totals = getSessionMetricTotals();
+  if (totals.samples < ALERT_MIN_SAMPLES) return;
+
+  const resolved = totals.completed + totals.failed;
+  const failurePercent = resolved > 0 ? (totals.failed / resolved) * 100 : 0;
+  const relayPercent = (totals.relay / totals.samples) * 100;
+
+  if (failurePercent >= ALERT_FAILURE_PERCENT) {
+    sendTelegramAlert(
+      'transfer-failures',
+      'Tasa de fallos elevada',
+      `${failurePercent.toFixed(1)}% de fallos en ${resolved} transferencias resueltas. Umbral: ${ALERT_FAILURE_PERCENT}%.`
+    ).catch(() => {});
+  }
+
+  if (relayPercent >= ALERT_RELAY_PERCENT) {
+    sendTelegramAlert(
+      'relay-usage',
+      'Uso de TURN elevado',
+      `${relayPercent.toFixed(1)}% de ${totals.samples} muestras usa relay TURN. Umbral: ${ALERT_RELAY_PERCENT}%.`
+    ).catch(() => {});
+  }
 }
 
 function formatDashboardMetrics(totals, persistenceEnabled) {
@@ -313,6 +392,14 @@ async function buildDashboardMetrics() {
   const persistedTotals = await metricsStore.getTotals();
   return formatDashboardMetrics(persistedTotals || getSessionMetricTotals(), Boolean(persistedTotals));
 }
+
+metricsStore.onError = ({ stage, message }) => {
+  sendTelegramAlert(
+    `database-${stage}`,
+    'Persistencia de métricas degradada',
+    `PostgreSQL no pudo ${stage === 'connection' ? 'conectar' : stage === 'write' ? 'guardar métricas' : 'leer métricas'}: ${message}`
+  ).catch(() => {});
+};
 
 function timingSafeTokenMatch(expected, received) {
   const expectedBuffer = Buffer.from(expected);
@@ -591,6 +678,17 @@ app.get('/admin/dashboard', requireAdminDashboard, (req, res) => {
 app.get('/admin/metrics', requireAdminDashboard, async (req, res) => {
   res.set('Cache-Control', 'no-store');
   res.json(await buildDashboardMetrics());
+});
+
+app.post('/admin/alerts/test', requireAdminDashboard, async (req, res) => {
+  const result = await sendTelegramAlert(
+    'telegram-test',
+    'Prueba de alertas',
+    'Telegram está conectado al monitoreo interno de AirDows.',
+    { force: true }
+  );
+  if (!result.sent) return res.status(503).json(result);
+  return res.json(result);
 });
 
 // REDIRECCIÓN FORZADA: Si el usuario escribe /app.html en la URL,

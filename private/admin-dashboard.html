@@ -14,7 +14,10 @@
     h1, h2, p { margin: 0; }
     h1 { font-size: 1.35rem; letter-spacing: 0; }
     header p, .muted { color: #9da4b5; font-size: .82rem; margin-top: 5px; }
+    .header-actions { align-items: center; display: flex; gap: 12px; }
     #updated-at { color: #7de8ff; font-size: .75rem; white-space: nowrap; }
+    #test-alert { background: #182d2c; border: 1px solid #2c7568; border-radius: 6px; color: #7ee8cc; cursor: pointer; font: inherit; font-size: .76rem; font-weight: 700; padding: 8px 10px; }
+    #test-alert:disabled { cursor: wait; opacity: .6; }
     .metrics { display: grid; gap: 12px; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: 20px; }
     .metric { background: #141720; border: 1px solid #292e3c; border-radius: 8px; min-height: 105px; padding: 14px; }
     .metric span { color: #9da4b5; display: block; font-size: .72rem; font-weight: 700; text-transform: uppercase; }
@@ -41,7 +44,10 @@
         <h1>AirDows Control</h1>
         <p>Métricas agregadas de confiabilidad y costo TURN.</p>
       </div>
-      <span id="updated-at">Cargando...</span>
+      <div class="header-actions">
+        <button id="test-alert" type="button">Probar Telegram</button>
+        <span id="updated-at">Cargando...</span>
+      </div>
     </header>
 
     <div class="metrics">
@@ -104,6 +110,20 @@
         setText('status', 'No fue posible cargar las métricas. Verifica la autorización.');
       }
     }
+
+    document.getElementById('test-alert').addEventListener('click', async (event) => {
+      const button = event.currentTarget;
+      button.disabled = true;
+      try {
+        const response = await fetch('/admin/alerts/test', { method: 'POST', credentials: 'same-origin' });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        setText('status', 'Alerta de prueba enviada a Telegram.');
+      } catch (error) {
+        setText('status', 'No fue posible enviar la alerta. Revisa TELEGRAM_BOT_TOKEN y TELEGRAM_CHAT_ID.');
+      } finally {
+        button.disabled = false;
+      }
+    });
 
     refresh();
     setInterval(refresh, 10000);
