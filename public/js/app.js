@@ -110,6 +110,16 @@ document.addEventListener('DOMContentLoaded', () => {
     airPet.className = `air-pet is-${state}`;
   }
 
+  function updateTransferModeBadge(options = {}) {
+    const modeKey = options.writeMode === 'disk'
+      ? 'pro_mode_disk'
+      : options.writeMode === 'memory'
+        ? 'pro_mode_memory'
+        : 'pro_mode_send';
+
+    diagnosticMode.textContent = translate(modeKey);
+  }
+
   function getQueueStatusLabel(status) {
     const labels = {
       pending: 'queue_pending',
@@ -466,11 +476,7 @@ document.addEventListener('DOMContentLoaded', () => {
     progressBarFill.style.width = '0%';
     progressPercent.textContent = '0%';
     btnCancelTransfer.classList.toggle('hidden', !isSending);
-    diagnosticMode.textContent = options.writeMode === 'disk'
-      ? translate('pro_mode_disk')
-      : options.writeMode === 'memory'
-        ? translate('pro_mode_memory')
-        : translate('pro_mode_send');
+    updateTransferModeBadge(options);
 
     transferStartTime = Date.now();
     lastProgressRenderTime = 0;

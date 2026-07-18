@@ -1,5 +1,8 @@
 class WebRTCManager {
   constructor(socketManager) {
+    this.CHUNK_SIZE = 65536;
+    this.BUFFER_THRESHOLD = 4194304;
+    this.RECEIVER_READY_TIMEOUT = 15000;
     this.socketManager = socketManager;
     this.peerConnection = null;
     this.dataChannel = null;
@@ -125,7 +128,7 @@ class WebRTCManager {
   setDataChannel(channel) {
     this.dataChannel = channel;
     this.dataChannel.binaryType = 'arraybuffer';
-    this.dataChannel.bufferedAmountLowThreshold = 2097152; // 2MB
+    this.dataChannel.bufferedAmountLowThreshold = this.BUFFER_THRESHOLD / 2;
 
     this.dataChannel.onopen = () => {
       console.log('Data channel state is: OPEN');
@@ -252,9 +255,19 @@ class WebRTCManager {
       return;
     }
 
+    if (state.receivedSize + data.byteLength > state.metadata.size) {
+      throw new Error('Se recibió más información de la esperada.');
+    }
+
     if (state.writeMode === 'disk' && state.writable) {
-      state.writeChain = state.writeChain.then(() => state.writable.write(data));
-      await state.writeChain;
+      try {
+        state.writeChain = state.writeChain.then(() => state.writable.write(data));
+        await state.writeChain;
+      } catch (err) {
+        state.writeFailed = true;
+        await this.abortReceiverDiskStream();
+        throw new Error(`No se pudo escribir el archivo en disco: ${err.message}`);
+      }
     } else {
       state.receivedBuffers.push(data);
     }
@@ -293,7 +306,16 @@ class WebRTCManager {
       }
 
       await this.prepareIncomingFile(message);
-      this.sendResumeOffset(message.transferId);
+      this.sendReceiverReady(message.transferId);
+      return;
+    }
+
+    if (message.type === 'receiver-ready') {
+      const waiter = this.resumeWaiters.get(message.transferId);
+      if (waiter) {
+        this.resumeWaiters.delete(message.transferId);
+        waiter(Math.max(0, Math.min(Number(message.offset) || 0, Number(message.size) || 0)));
+      }
       return;
     }
 
@@ -340,6 +362,10 @@ class WebRTCManager {
 
     if (canResume) {
       console.log(`Resuming incoming transfer at byte ${current.receivedSize}`);
+      if (current.writeMode === 'disk' && current.writable) {
+        await current.writeChain;
+        await current.writable.seek(current.receivedSize);
+      }
       return;
     }
 
@@ -392,7 +418,7 @@ class WebRTCManager {
     });
   }
 
-  sendResumeOffset(transferId) {
+  sendReceiverReady(transferId) {
     if (!transferId || !this.dataChannel || this.dataChannel.readyState !== 'open') return;
 
     const state = this.receiverState;
@@ -401,10 +427,11 @@ class WebRTCManager {
       : 0;
 
     this.dataChannel.send(JSON.stringify({
-      type: 'resume-offset',
+      type: 'receiver-ready',
       transferId,
       offset,
-      size: state.metadata ? state.metadata.size : 0
+      size: state.metadata ? state.metadata.size : 0,
+      writeMode: state.writeMode
     }));
   }
 
@@ -451,7 +478,9 @@ class WebRTCManager {
   }
 
   supportsDiskWriteMode() {
-    return typeof window !== 'undefined' && typeof window.showSaveFilePicker === 'function';
+    return typeof window !== 'undefined' &&
+      window.isSecureContext === true &&
+      typeof window.showSaveFilePicker === 'function';
   }
 
   getFileExtension(fileName) {
@@ -476,6 +505,21 @@ class WebRTCManager {
     }
   }
 
+  async abortReceiverDiskStream() {
+    const state = this.receiverState;
+    if (!state || !state.writable) return;
+
+    try {
+      await state.writeChain.catch(() => {});
+      await state.writable.abort();
+    } catch (err) {
+      console.error('Error aborting receiver disk stream:', err);
+    } finally {
+      state.writable = null;
+      state.fileHandle = null;
+    }
+  }
+
   async resetReceiverState() {
     await this.cleanupReceiverDiskStream();
     this.receiverState = this.createEmptyReceiverState();
@@ -485,6 +529,8 @@ class WebRTCManager {
     return (
       typeof message.name === 'string' &&
       message.name.trim().length > 0 &&
+      typeof message.transferId === 'string' &&
+      message.transferId.trim().length > 0 &&
       Number.isSafeInteger(message.size) &&
       message.size >= 0 &&
       typeof message.mime === 'string' &&
@@ -504,9 +550,8 @@ class WebRTCManager {
       throw new Error('Data connection is not ready or open yet!');
     }
 
-    const CHUNK_SIZE = 65536; // 64KB
-    const BUFFER_THRESHOLD = 4194304; // 4MB
-    this.dataChannel.bufferedAmountLowThreshold = BUFFER_THRESHOLD / 2;
+    const CHUNK_SIZE = this.CHUNK_SIZE;
+    const BUFFER_THRESHOLD = this.BUFFER_THRESHOLD;
 
     const transfer = {
       fileName: file.name,
@@ -534,7 +579,19 @@ class WebRTCManager {
     };
     this.dataChannel.send(JSON.stringify(metadata));
 
-    const resumeOffset = await this.waitForResumeOffset(transfer);
+    let resumeOffset;
+    try {
+      resumeOffset = await this.waitForReceiverReady(transfer);
+      if (resumeOffset === null) {
+        throw new Error('El receptor no confirmó que está listo para recibir.');
+      }
+    } catch (err) {
+      this.resumeWaiters.delete(transfer.transferId);
+      if (this.activeSendTransfer === transfer) {
+        this.activeSendTransfer = null;
+      }
+      throw err;
+    }
 
     this.startNetworkDiagnostics({
       direction: 'send',
@@ -611,12 +668,12 @@ class WebRTCManager {
     }
   }
 
-  waitForResumeOffset(transfer) {
+  waitForReceiverReady(transfer) {
     return new Promise((resolve) => {
       const timeout = setTimeout(() => {
         this.resumeWaiters.delete(transfer.transferId);
-        resolve(0);
-      }, 3000);
+        resolve(null);
+      }, this.RECEIVER_READY_TIMEOUT);
 
       this.resumeWaiters.set(transfer.transferId, (offset) => {
         clearTimeout(timeout);
