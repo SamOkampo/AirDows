@@ -9,6 +9,7 @@
   "dependencies": {
     "express": "^4.19.2",
     "express-rate-limit": "^8.6.0",
+    "qrcode-generator": "^2.0.4",
     "socket.io": "^4.7.5"
   }
 }

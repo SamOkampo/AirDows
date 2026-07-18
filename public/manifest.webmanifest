@@ -6,5 +6,20 @@
   "display": "standalone",
   "background_color": "#0b1020",
   "theme_color": "#0b1020",
-  "orientation": "portrait-primary"
+  "orientation": "portrait-primary",
+  "share_target": {
+    "action": "/share-target",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "files": [
+        {
+          "name": "files",
+          "accept": ["*/*"]
+        }
+      ]
+    }
+  }
 }

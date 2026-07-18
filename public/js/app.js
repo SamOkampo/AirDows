@@ -74,6 +74,9 @@ document.addEventListener('DOMContentLoaded', () => {
   let reconnectAttempts = 0;
   const maxReconnectAttempts = 5;
   let activeTransferMode = 'idle';
+  let transferIsActive = false;
+  let wakeLock = null;
+  let sharedFilesPending = [];
 
   // --- HELPERS ---
   function translate(key) {
@@ -125,6 +128,55 @@ document.addEventListener('DOMContentLoaded', () => {
         : 'pro_mode_send';
 
     diagnosticMode.textContent = translate(modeKey);
+  }
+
+  async function acquireTransferWakeLock() {
+    if (!('wakeLock' in navigator) || wakeLock) return;
+
+    try {
+      wakeLock = await navigator.wakeLock.request('screen');
+      wakeLock.addEventListener('release', () => {
+        wakeLock = null;
+      });
+    } catch (error) {
+      console.info('Wake Lock unavailable:', error.message);
+    }
+  }
+
+  async function releaseTransferWakeLock() {
+    if (!wakeLock) return;
+    try {
+      await wakeLock.release();
+    } catch (error) {
+      console.info('Wake Lock release failed:', error.message);
+    } finally {
+      wakeLock = null;
+    }
+  }
+
+  async function restoreSharedFiles() {
+    if (!new URLSearchParams(window.location.search).has('shared')) return;
+    if (!('indexedDB' in window)) return;
+
+    const request = indexedDB.open('airdows-share', 1);
+    request.onupgradeneeded = () => request.result.createObjectStore('pending');
+    request.onsuccess = () => {
+      const db = request.result;
+      const transaction = db.transaction('pending', 'readwrite');
+      const store = transaction.objectStore('pending');
+      const readRequest = store.get('latest');
+
+      readRequest.onsuccess = () => {
+        const payload = readRequest.result;
+        if (payload && payload.files && payload.files.length) {
+          sharedFilesPending = Array.from(payload.files);
+          if (roomCode) enqueueFiles(sharedFilesPending);
+        }
+        store.delete('latest');
+        window.history.replaceState({}, document.title, window.location.pathname);
+        db.close();
+      };
+    };
   }
 
   function getQueueStatusLabel(status) {
@@ -369,17 +421,10 @@ document.addEventListener('DOMContentLoaded', () => {
     // Generate QR Code containing join URL
     const joinUrl = `${window.location.origin}/app?code=${code}`;
     qrcodeDiv.innerHTML = '';
-    if (typeof QRCode === 'undefined') {
+    if (typeof QRManager === 'undefined') {
       showToast(translate('qr_library_fail'));
     } else {
-      qrCodeInstance = new QRCode(qrcodeDiv, {
-        text: joinUrl,
-        width: 120,
-        height: 120,
-        colorDark: '#090a0f',
-        colorLight: '#ffffff',
-        correctLevel: QRCode.CorrectLevel.H
-      });
+      qrCodeInstance = QRManager.draw(qrcodeDiv, joinUrl, 120);
     }
   };
 
@@ -387,6 +432,7 @@ document.addEventListener('DOMContentLoaded', () => {
     console.log(`Paired as ${role} in room ${code}`);
     setPetState('connecting');
     roomCode = code;
+
     
     switchView('transfer');
     connectionStatusText.textContent = translate('conn_connecting');
@@ -401,6 +447,12 @@ document.addEventListener('DOMContentLoaded', () => {
     activeQueueItem = null;
     isProcessingQueue = false;
     renderQueue();
+
+    if (sharedFilesPending.length) {
+      const filesToQueue = sharedFilesPending;
+      sharedFilesPending = [];
+      enqueueFiles(filesToQueue);
+    }
 
     // Initialize WebRTC connection (Check if we have config first)
     if (!webrtcManager.rtcConfig) {
@@ -469,6 +521,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   webrtcManager.onFileTransferStart = (fileName, totalBytes, isSending, options = {}) => {
     activeTransferMode = options.writeMode || 'send';
+    transferIsActive = true;
+    acquireTransferWakeLock();
     setPetState('transferring');
     dropZone.classList.add('hidden');
     completedCard.classList.add('hidden');
@@ -515,6 +569,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   webrtcManager.onFileTransferComplete = (fileBlob, fileName, options = {}) => {
     activeTransferMode = 'idle';
+    transferIsActive = false;
+    releaseTransferWakeLock();
     setPetState('idle');
     progressCard.classList.add('hidden');
     networkDiagnostics.classList.add('hidden');
@@ -566,11 +622,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
   webrtcManager.onTransferError = () => {
     activeTransferMode = 'idle';
+    transferIsActive = false;
+    releaseTransferWakeLock();
     setPetState('error');
   };
 
   webrtcManager.onFileTransferCancelled = (fileName, isLocal) => {
     activeTransferMode = 'idle';
+    transferIsActive = false;
+    releaseTransferWakeLock();
     setPetState('idle');
     progressCard.classList.add('hidden');
     networkDiagnostics.classList.add('hidden');
@@ -693,6 +753,8 @@ document.addEventListener('DOMContentLoaded', () => {
       reconnectTimer = null;
     }
     reconnectAttempts = 0;
+    transferIsActive = false;
+    releaseTransferWakeLock();
     if (activeQueueItem) {
       webrtcManager.cancelActiveTransfer();
     }
@@ -733,6 +795,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // --- INITIATE CONNECTION ---
   socketManager.connect();
+  restoreSharedFiles();
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && transferIsActive) {
+      acquireTransferWakeLock();
+    }
+  });
 
   // --- CHECK URL QUERY PARAMS FOR QR AUTO-JOIN ---
   const urlParams = new URLSearchParams(window.location.search);
