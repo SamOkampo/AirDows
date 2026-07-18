@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="robots" content="noindex, nofollow">
   <title>AirDows Admin</title>
+  <link rel="icon" type="image/png" href="/assets/favicon.png">
   <style>
     :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
     * { box-sizing: border-box; }
@@ -13,6 +14,8 @@
     header { align-items: flex-end; border-bottom: 1px solid #272b38; display: flex; gap: 16px; justify-content: space-between; padding-bottom: 20px; }
     h1, h2, p { margin: 0; }
     h1 { font-size: 1.35rem; letter-spacing: 0; }
+    .admin-brand { align-items: center; display: flex; gap: 10px; }
+    .admin-brand img { height: 32px; object-fit: contain; width: 32px; }
     header p, .muted { color: #9da4b5; font-size: .82rem; margin-top: 5px; }
     .header-actions { align-items: center; display: flex; gap: 12px; }
     #updated-at { color: #7de8ff; font-size: .75rem; white-space: nowrap; }
@@ -41,7 +44,7 @@
   <main>
     <header>
       <div>
-        <h1>AirDows Control</h1>
+        <div class="admin-brand"><img src="/assets/favicon.png" alt="" width="32" height="32"><h1>AirDows Control</h1></div>
         <p>Métricas agregadas de confiabilidad y costo TURN.</p>
       </div>
       <div class="header-actions">
