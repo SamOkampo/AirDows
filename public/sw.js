@@ -1,4 +1,4 @@
-const CACHE_NAME = 'airdows-shell-v4';
+const CACHE_NAME = 'airdows-shell-v5';
 const APP_SHELL = [
   '/',
   '/app',
@@ -51,6 +51,8 @@ self.addEventListener('fetch', (event) => {
 
   if (event.request.method !== 'GET' || !event.request.url.startsWith(self.location.origin)) return;
   if (requestUrl.pathname.startsWith('/socket.io/')) return;
+  // Never cache protected operational data or its authentication response.
+  if (requestUrl.pathname.startsWith('/admin/')) return;
 
   event.respondWith(handleGetRequest(event.request));
 });

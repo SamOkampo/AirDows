@@ -11,6 +11,8 @@ class SocketManager {
     this.onConnect = null;
     this.onDisconnect = null;
     this.onIceConfig = null; // New: Callback for ICE configuration
+    this.onRelayBudget = null;
+    this.onProRequired = null;
   }
 
   connect() {
@@ -42,6 +44,14 @@ class SocketManager {
     this.socket.on('ice-config', (config) => {
       console.log('Received ICE configuration from server');
       if (this.onIceConfig) this.onIceConfig(config);
+    });
+
+    this.socket.on('relay-budget', (budget) => {
+      if (this.onRelayBudget) this.onRelayBudget(budget);
+    });
+
+    this.socket.on('pro-required', (details) => {
+      if (this.onProRequired) this.onProRequired(details);
     });
 
     this.socket.on('code-generated', (data) => {
@@ -111,6 +121,18 @@ class SocketManager {
   sendNetworkHealth(payload) {
     if (this.socket && this.socket.connected) {
       this.socket.emit('network-health', payload);
+    }
+  }
+
+  sendRelayUsage(bytes) {
+    if (this.socket && this.socket.connected) {
+      this.socket.emit('relay-usage', { bytes });
+    }
+  }
+
+  requestRelayUpgrade() {
+    if (this.socket && this.socket.connected) {
+      this.socket.emit('relay-budget-exhausted');
     }
   }
 }

@@ -180,12 +180,14 @@ document.addEventListener('DOMContentLoaded', () => {
     return 'long';
   }
 
-  function beginNetworkHealthSample(isSending) {
+  function beginNetworkHealthSample(isSending, options = {}) {
     networkHealthSample = {
       startedAt: Date.now(),
-      route: 'unknown',
+      route: options.connectionType || 'unknown',
       peakSpeed: 0,
-      direction: isSending ? 'send' : 'receive'
+      direction: isSending ? 'send' : 'receive',
+      relayChunks: 0,
+      relayChunkSize: Number.isSafeInteger(options.chunkSize) ? options.chunkSize : 0
     };
   }
 
@@ -196,7 +198,10 @@ document.addEventListener('DOMContentLoaded', () => {
       route: networkHealthSample.route,
       outcome,
       speed: getSpeedBucket(networkHealthSample.peakSpeed),
-      duration: getDurationBucket(Date.now() - networkHealthSample.startedAt)
+      duration: getDurationBucket(Date.now() - networkHealthSample.startedAt),
+      direction: networkHealthSample.direction,
+      relayChunks: networkHealthSample.relayChunks,
+      relayChunkSize: networkHealthSample.relayChunkSize
     });
     networkHealthSample = null;
   }
@@ -454,6 +459,9 @@ document.addEventListener('DOMContentLoaded', () => {
       } catch (err) {
         if (err.name === 'TransferCancelledError' || nextItem.status === 'cancelled') {
           nextItem.status = 'cancelled';
+        } else if (err.name === 'ProRequiredError') {
+          nextItem.status = 'error';
+          showToast('Límite gratuito de relay alcanzado. AirDows Pro permite continuar transferencias remotas grandes.');
         } else if (/connection (is not ready|closed)|data connection/i.test(err.message)) {
           nextItem.status = 'pending';
           p2pConnected = false;
@@ -646,6 +654,15 @@ document.addEventListener('DOMContentLoaded', () => {
     showToast(message);
   };
 
+  socketManager.onRelayBudget = (budget) => {
+    webrtcManager.setRelayBudget(budget);
+  };
+
+  socketManager.onProRequired = () => {
+    webrtcManager.handleProRequired();
+    showToast('Límite gratuito de relay alcanzado. Necesitas AirDows Pro para continuar por esta ruta.');
+  };
+
   // --- WEBRTC EVENT HANDLERS ---
   webrtcManager.onConnectionStateChange = (state) => {
     console.log('WebRTC Connection state changed to:', state);
@@ -698,7 +715,7 @@ document.addEventListener('DOMContentLoaded', () => {
     transferIsActive = true;
     acquireTransferWakeLock();
     setNativeTransferKeepAlive(true);
-    beginNetworkHealthSample(isSending);
+    beginNetworkHealthSample(isSending, options);
     updateConnectionHealth({ connectionType: 'unknown', speed: 0 });
     setPetState('transferring');
     dropZone.classList.add('hidden');
@@ -749,6 +766,10 @@ document.addEventListener('DOMContentLoaded', () => {
     transferIsActive = false;
     releaseTransferWakeLock();
     setNativeTransferKeepAlive(false);
+    if (networkHealthSample && options.connectionType === 'relay') {
+      networkHealthSample.relayChunks = Math.max(networkHealthSample.relayChunks, options.relayChunks || 0);
+      networkHealthSample.relayChunkSize = options.relayChunkSize || networkHealthSample.relayChunkSize;
+    }
     recordNetworkHealth('completed');
     applyPendingPwaUpdate();
     setPetState('idle');
@@ -803,6 +824,12 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     const isTurboMode = activeTransferMode === 'disk' || activeTransferMode === 'send';
     setPetState(isTurboMode && metrics.speed >= 10 * 1024 * 1024 ? 'turbo' : 'transferring');
+  };
+
+  webrtcManager.onRelayUsage = ({ chunkSize, chunks }) => {
+    if (!networkHealthSample || networkHealthSample.direction !== 'send') return;
+    networkHealthSample.relayChunks += chunks;
+    networkHealthSample.relayChunkSize = chunkSize;
   };
 
   webrtcManager.onTransferError = () => {

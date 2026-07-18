@@ -22,6 +22,7 @@ class WebRTCManager {
     this.onFileTransferCancelled = null; // (fileName, isLocal)
     this.onTransferError = null; // ({ type, message, fileName })
     this.onNetworkDiagnostics = null; // ({ connectionType, speed, qualityLabel, isLocal, percent })
+    this.onRelayUsage = null; // ({ chunkSize, chunks })
 
     this.receiverState = this.createEmptyReceiverState();
 
@@ -33,6 +34,8 @@ class WebRTCManager {
     this.activeSendTransfer = null;
     this.resumeWaiters = new Map();
     this.encryption = this.createEncryptionState();
+    this.relayBudget = { plan: 'free', limitBytes: Number.POSITIVE_INFINITY, usedBytes: 0, blocked: false };
+    this.pendingRelayUsageBytes = 0;
 
     this.diagnosticsInterval = null;
     this.diagnosticsTransfer = null;
@@ -555,7 +558,9 @@ class WebRTCManager {
       this.onFileTransferStart(metadata.name, metadata.size, false, {
         writeMode: nextState.writeMode,
         supportsDiskWrite: this.supportsDiskWriteMode(),
-        performanceProfile: metadata.performanceProfile || 'Modo inteligente'
+        performanceProfile: metadata.performanceProfile || 'Modo inteligente',
+        connectionType: metadata.connectionType || 'unknown',
+        chunkSize: metadata.chunkSize || 0
       });
     }
 
@@ -720,16 +725,22 @@ class WebRTCManager {
       transferId: options.transferId || this.createTransferId(),
       reader: null,
       cancelled: false,
+      proRequired: false,
       abortController: new AbortController(),
       bytesTransferred: 0,
-      totalBytes: file.size
+      totalBytes: file.size,
+      connectionType: performanceProfile.connectionType,
+      relayChunks: 0,
+      relayChunkSize: CHUNK_SIZE
     };
     this.activeSendTransfer = transfer;
 
     if (this.onFileTransferStart) {
       this.onFileTransferStart(file.name, file.size, true, {
         writeMode: 'send',
-        performanceProfile: performanceProfile.label
+        performanceProfile: performanceProfile.label,
+        connectionType: performanceProfile.connectionType,
+        chunkSize: CHUNK_SIZE
       });
     }
 
@@ -740,7 +751,9 @@ class WebRTCManager {
       mime: file.type || 'application/octet-stream',
       transferId: transfer.transferId,
       encryption: sessionKey ? 'aes-gcm-256' : null,
-      performanceProfile: performanceProfile.label
+      performanceProfile: performanceProfile.label,
+      connectionType: performanceProfile.connectionType,
+      chunkSize: CHUNK_SIZE
     };
     this.dataChannel.send(JSON.stringify(metadata));
 
@@ -797,6 +810,21 @@ class WebRTCManager {
           }
 
           const outgoingChunk = sessionKey ? await this.encryptChunk(chunk) : chunk;
+          if (performanceProfile.connectionType === 'relay') {
+            if (!this.reserveRelayBudget(outgoingChunk.byteLength)) {
+              transfer.proRequired = true;
+              this.notifyPeerTransferCancelled(transfer);
+              const error = this.createProRequiredError();
+              this.reportTransferError('relay-budget', error, file.name);
+              throw error;
+            }
+
+            transfer.relayChunks += 1;
+            this.queueRelayUsage(outgoingChunk.byteLength);
+            if (this.onRelayUsage) {
+              this.onRelayUsage({ chunkSize: CHUNK_SIZE, chunks: 1 });
+            }
+          }
           this.dataChannel.send(outgoingChunk);
           chunkOffset += sliceSize;
           offset += sliceSize;
@@ -812,11 +840,18 @@ class WebRTCManager {
 
       if (this.onFileTransferComplete) {
         this.onFileTransferComplete(null, file.name, {
-          writeMode: 'send'
+          writeMode: 'send',
+          connectionType: performanceProfile.connectionType,
+          relayChunks: transfer.relayChunks,
+          relayChunkSize: transfer.relayChunkSize
         });
       }
     } catch (err) {
       this.stopNetworkDiagnostics();
+
+      if (transfer.proRequired || err.name === 'ProRequiredError') {
+        throw this.createProRequiredError();
+      }
 
       if (transfer.cancelled || err.name === 'AbortError') {
         const cancelError = new Error('Transfer cancelled.');
@@ -827,6 +862,7 @@ class WebRTCManager {
       console.error('Error during file stream send:', err);
       throw err;
     } finally {
+      this.flushRelayUsage();
       reader.releaseLock();
       if (this.activeSendTransfer === transfer) {
         this.activeSendTransfer = null;
@@ -920,6 +956,72 @@ class WebRTCManager {
 
   async getAdaptiveChunkSize() {
     return (await this.selectPerformanceProfile()).chunkSize;
+  }
+
+  setRelayBudget(budget = {}) {
+    const limitBytes = Number.isSafeInteger(budget.limitBytes) && budget.limitBytes >= 0
+      ? budget.limitBytes
+      : Number.POSITIVE_INFINITY;
+    const usedBytes = Number.isSafeInteger(budget.usedBytes) && budget.usedBytes >= 0
+      ? Math.min(budget.usedBytes, limitBytes)
+      : 0;
+
+    this.relayBudget = {
+      plan: budget.plan === 'pro' ? 'pro' : 'free',
+      limitBytes,
+      usedBytes,
+      blocked: Boolean(budget.blocked)
+    };
+  }
+
+  reserveRelayBudget(bytes) {
+    if (this.relayBudget.plan === 'pro') return true;
+    if (this.relayBudget.blocked || this.relayBudget.usedBytes + bytes > this.relayBudget.limitBytes) {
+      this.relayBudget.blocked = true;
+      this.flushRelayUsage();
+      this.socketManager.requestRelayUpgrade();
+      return false;
+    }
+
+    this.relayBudget.usedBytes += bytes;
+    return true;
+  }
+
+  queueRelayUsage(bytes) {
+    this.pendingRelayUsageBytes += bytes;
+    if (this.pendingRelayUsageBytes >= 1024 * 1024) this.flushRelayUsage();
+  }
+
+  flushRelayUsage() {
+    if (!this.pendingRelayUsageBytes) return;
+    this.socketManager.sendRelayUsage(this.pendingRelayUsageBytes);
+    this.pendingRelayUsageBytes = 0;
+  }
+
+  createProRequiredError() {
+    const error = new Error('Se alcanzó el límite de relay del plan gratuito.');
+    error.name = 'ProRequiredError';
+    return error;
+  }
+
+  notifyPeerTransferCancelled(transfer) {
+    if (!this.dataChannel || this.dataChannel.readyState !== 'open') return;
+    this.dataChannel.send(JSON.stringify({
+      type: 'transfer-cancelled',
+      name: transfer.fileName
+    }));
+  }
+
+  handleProRequired() {
+    this.relayBudget.blocked = true;
+    const transfer = this.activeSendTransfer;
+    if (!transfer || transfer.connectionType !== 'relay' || transfer.proRequired) return;
+
+    transfer.proRequired = true;
+    transfer.abortController.abort();
+    if (transfer.reader) transfer.reader.cancel().catch(() => {});
+    this.notifyPeerTransferCancelled(transfer);
+    this.reportTransferError('relay-budget', this.createProRequiredError(), transfer.fileName);
   }
 
   reportTransferProgress(bytesTransferred, totalBytes, fileName, isSending) {

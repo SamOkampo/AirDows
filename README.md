@@ -54,6 +54,22 @@ The codebase is engineered to be exceptionally clean, modular, and separated by 
 
 ---
 
+## Control de costos TURN
+
+El panel privado de operaciones está disponible en `/admin/dashboard`. Antes de desplegar,
+define estas variables de entorno:
+
+```bash
+ADMIN_DASHBOARD_TOKEN=<token-largo-y-aleatorio>
+FREE_RELAY_BUDGET_BYTES=262144000
+```
+
+Ábrelo con autenticación HTTP Basic: usuario `admin` y como contraseña el valor de
+`ADMIN_DASHBOARD_TOKEN`. El presupuesto indicado equivale a 250 MiB por sesión gratuita
+que use relay TURN; al agotarse, el cliente recibe `PRO_REQUIRED`.
+
+---
+
 ## 📱 How to Use (Local Network Transfer)
 
 For transferring files between a **desktop** and a **mobile phone**:

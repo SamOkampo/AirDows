@@ -31,6 +31,12 @@ const MAX_JOIN_ATTEMPTS = 5;
 const ICE_CONFIG_CACHE_MS = 10 * 60 * 1000;
 const NETWORK_HEALTH_WINDOW_MS = 60 * 1000;
 const MAX_NETWORK_HEALTH_EVENTS = 12;
+const FREE_RELAY_BUDGET_BYTES = Math.max(
+  0,
+  Number.parseInt(process.env.FREE_RELAY_BUDGET_BYTES || String(250 * 1024 * 1024), 10) || 0
+);
+const MAX_RELAY_USAGE_REPORT_BYTES = 8 * 1024 * 1024;
+const ADMIN_DASHBOARD_TOKEN = process.env.ADMIN_DASHBOARD_TOKEN || '';
 
 let cachedIceConfig = null;
 let cachedIceConfigExpiresAt = 0;
@@ -147,7 +153,11 @@ const networkHealthStats = {
   byRoute: Object.create(null),
   byOutcome: Object.create(null),
   bySpeed: Object.create(null),
-  byDuration: Object.create(null)
+  byDuration: Object.create(null),
+  relayChunks: 0,
+  relayEstimatedBytes: 0,
+  proRequiredEvents: 0,
+  startedAt: new Date().toISOString()
 };
 
 function incrementMetric(bucket, key) {
@@ -159,12 +169,22 @@ function normalizeNetworkHealth(payload) {
   const outcomes = new Set(['completed', 'cancelled', 'failed']);
   const speedBuckets = new Set(['slow', 'moderate', 'fast', 'turbo', 'unknown']);
   const durationBuckets = new Set(['short', 'medium', 'long', 'unknown']);
+  const direction = payload.direction === 'send' ? 'send' : 'receive';
+  const relayChunks = Number.isSafeInteger(payload.relayChunks) && payload.relayChunks >= 0
+    ? Math.min(payload.relayChunks, 10_000_000)
+    : 0;
+  const relayChunkSize = Number.isSafeInteger(payload.relayChunkSize) && payload.relayChunkSize >= 16 * 1024
+    ? Math.min(payload.relayChunkSize, 1024 * 1024)
+    : 0;
 
   return {
     route: routes.has(payload.route) ? payload.route : 'unknown',
     outcome: outcomes.has(payload.outcome) ? payload.outcome : 'failed',
     speed: speedBuckets.has(payload.speed) ? payload.speed : 'unknown',
-    duration: durationBuckets.has(payload.duration) ? payload.duration : 'unknown'
+    duration: durationBuckets.has(payload.duration) ? payload.duration : 'unknown',
+    direction,
+    relayChunks,
+    relayChunkSize
   };
 }
 
@@ -176,9 +196,139 @@ function recordNetworkHealth(payload) {
   incrementMetric(networkHealthStats.bySpeed, metric.speed);
   incrementMetric(networkHealthStats.byDuration, metric.duration);
 
+  // Only the sending peer reports chunks, preventing receiver-side double counting.
+  if (metric.route === 'relay' && metric.direction === 'send') {
+    networkHealthStats.relayChunks += metric.relayChunks;
+    networkHealthStats.relayEstimatedBytes += metric.relayChunks * metric.relayChunkSize;
+  }
+
   if (networkHealthStats.samples % 25 === 0) {
     console.info('[AirDows] Network health aggregate', networkHealthStats);
   }
+}
+
+function getRelayBudget(socket) {
+  if (!socket.data.relayBudget) {
+    socket.data.relayBudget = {
+      limitBytes: FREE_RELAY_BUDGET_BYTES,
+      usedBytes: 0,
+      blocked: false
+    };
+  }
+  return socket.data.relayBudget;
+}
+
+function emitProRequired(socket) {
+  const budget = getRelayBudget(socket);
+  if (budget.blocked) return;
+
+  budget.blocked = true;
+  networkHealthStats.proRequiredEvents += 1;
+  socket.emit('pro-required', {
+    code: 'PRO_REQUIRED',
+    plan: 'free',
+    limitBytes: budget.limitBytes,
+    usedBytes: budget.usedBytes
+  });
+}
+
+function buildDashboardMetrics() {
+  const outcomes = networkHealthStats.byOutcome;
+  const routes = networkHealthStats.byRoute;
+  const completed = outcomes.completed || 0;
+  const failed = outcomes.failed || 0;
+  const resolvedTransfers = completed + failed;
+  const routeSamples = Math.max(networkHealthStats.samples, 1);
+  const host = routes.host || 0;
+  const srflx = routes.srflx || 0;
+  const relay = routes.relay || 0;
+
+  return {
+    generatedAt: new Date().toISOString(),
+    startedAt: networkHealthStats.startedAt,
+    samples: networkHealthStats.samples,
+    transferSuccess: {
+      completed,
+      failed,
+      percent: resolvedTransfers > 0 ? Number(((completed / resolvedTransfers) * 100).toFixed(1)) : 0
+    },
+    routes: {
+      host,
+      srflx,
+      relay,
+      hostPercent: Number(((host / routeSamples) * 100).toFixed(1)),
+      directPercent: Number((((host + srflx) / routeSamples) * 100).toFixed(1)),
+      relayPercent: Number(((relay / routeSamples) * 100).toFixed(1))
+    },
+    relay: {
+      chunks: networkHealthStats.relayChunks,
+      estimatedGiB: Number((networkHealthStats.relayEstimatedBytes / (1024 ** 3)).toFixed(3)),
+      freeBudgetMiB: Number((FREE_RELAY_BUDGET_BYTES / (1024 ** 2)).toFixed(0)),
+      proRequiredEvents: networkHealthStats.proRequiredEvents
+    }
+  };
+}
+
+function timingSafeTokenMatch(expected, received) {
+  const expectedBuffer = Buffer.from(expected);
+  const receivedBuffer = Buffer.from(received || '');
+  return expectedBuffer.length === receivedBuffer.length && crypto.timingSafeEqual(expectedBuffer, receivedBuffer);
+}
+
+function getAdminSessionValue() {
+  return crypto
+    .createHmac('sha256', ADMIN_DASHBOARD_TOKEN)
+    .update('airdows-admin-session')
+    .digest('base64url');
+}
+
+function getCookieValue(req, name) {
+  const prefix = `${name}=`;
+  const cookie = req.get('cookie') || '';
+  const pair = cookie.split(';').map((item) => item.trim()).find((item) => item.startsWith(prefix));
+  return pair ? decodeURIComponent(pair.slice(prefix.length)) : '';
+}
+
+function requireAdminDashboard(req, res, next) {
+  if (!ADMIN_DASHBOARD_TOKEN) {
+    return res.status(503).send('Admin dashboard is disabled. Set ADMIN_DASHBOARD_TOKEN in production.');
+  }
+
+  const authorization = req.get('authorization') || '';
+  let token = '';
+
+  if (authorization.startsWith('Bearer ')) {
+    token = authorization.slice('Bearer '.length).trim();
+  } else if (authorization.startsWith('Basic ')) {
+    try {
+      const credentials = Buffer.from(authorization.slice('Basic '.length), 'base64').toString('utf8');
+      const separator = credentials.indexOf(':');
+      const username = separator >= 0 ? credentials.slice(0, separator) : '';
+      const password = separator >= 0 ? credentials.slice(separator + 1) : '';
+      token = username === 'admin' ? password : '';
+    } catch (error) {
+      token = '';
+    }
+  }
+
+  const hasValidToken = timingSafeTokenMatch(ADMIN_DASHBOARD_TOKEN, token);
+  const hasValidSession = timingSafeTokenMatch(getAdminSessionValue(), getCookieValue(req, 'airdows_admin'));
+  if (!hasValidToken && !hasValidSession) {
+    res.set('WWW-Authenticate', 'Basic realm="AirDows Admin", charset="UTF-8"');
+    return res.status(401).send('Unauthorized');
+  }
+
+  if (hasValidToken) {
+    res.cookie('airdows_admin', getAdminSessionValue(), {
+      httpOnly: true,
+      sameSite: 'strict',
+      secure: process.env.NODE_ENV === 'production',
+      maxAge: 8 * 60 * 60 * 1000,
+      path: '/admin'
+    });
+  }
+
+  return next();
 }
 
 // Helper to generate a unique 4-digit code
@@ -192,6 +342,12 @@ function generateUniqueCode() {
 
 io.on('connection', (socket) => {
   console.log(`Client connected: ${socket.id}`);
+  const relayBudget = getRelayBudget(socket);
+  socket.emit('relay-budget', {
+    plan: 'free',
+    limitBytes: relayBudget.limitBytes,
+    usedBytes: relayBudget.usedBytes
+  });
 
   socket.on('get-ice-config', async () => {
     try {
@@ -217,6 +373,22 @@ io.on('connection', (socket) => {
     events.count += 1;
     socket.data.networkHealthEvents = events;
     recordNetworkHealth(payload);
+  });
+
+  socket.on('relay-usage', (payload = {}) => {
+    const bytes = Number.isSafeInteger(payload.bytes) && payload.bytes > 0
+      ? Math.min(payload.bytes, MAX_RELAY_USAGE_REPORT_BYTES)
+      : 0;
+    if (!bytes) return;
+
+    const budget = getRelayBudget(socket);
+    if (budget.blocked) return;
+    budget.usedBytes += bytes;
+    if (budget.usedBytes > budget.limitBytes) emitProRequired(socket);
+  });
+
+  socket.on('relay-budget-exhausted', () => {
+    emitProRequired(socket);
   });
 
   // 1. Generate a new pairing code
@@ -365,6 +537,16 @@ function leaveAllRooms(socket) {
 
 // Aplicar el limitador de peticiones primero
 app.use(apiLimiter);
+
+app.get('/admin/dashboard', requireAdminDashboard, (req, res) => {
+  res.set('Cache-Control', 'private, no-store');
+  res.sendFile(path.join(__dirname, 'private', 'admin-dashboard.html'));
+});
+
+app.get('/admin/metrics', requireAdminDashboard, (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json(buildDashboardMetrics());
+});
 
 // REDIRECCIÓN FORZADA: Si el usuario escribe /app.html en la URL,
 // lo pateamos automáticamente a /app para limpiar el navegador.
