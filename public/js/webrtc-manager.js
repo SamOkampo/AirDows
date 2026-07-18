@@ -1,7 +1,8 @@
 class WebRTCManager {
   constructor(socketManager) {
     this.CHUNK_SIZE = 65536;
-    this.BUFFER_THRESHOLD = 4194304;
+    this.BUFFER_THRESHOLD = 16 * 1024 * 1024;
+    this.BUFFER_LOW_THRESHOLD = 8 * 1024 * 1024;
     this.RECEIVER_READY_TIMEOUT = 15000;
     this.socketManager = socketManager;
     this.peerConnection = null;
@@ -60,7 +61,8 @@ class WebRTCManager {
       fileHandle: null,
       writable: null,
       writeChain: Promise.resolve(),
-      writeFailed: false
+      writeFailed: false,
+      memoryChunkCount: 0
     };
   }
 
@@ -143,7 +145,7 @@ class WebRTCManager {
   setDataChannel(channel) {
     this.dataChannel = channel;
     this.dataChannel.binaryType = 'arraybuffer';
-    this.dataChannel.bufferedAmountLowThreshold = this.BUFFER_THRESHOLD / 2;
+    this.dataChannel.bufferedAmountLowThreshold = this.BUFFER_LOW_THRESHOLD;
 
     this.dataChannel.onopen = () => {
       console.log('Data channel state is: OPEN');
@@ -286,6 +288,12 @@ class WebRTCManager {
       }
     } else {
       state.receivedBuffers.push(data);
+      state.memoryChunkCount += 1;
+
+      // Yield periodically so rendering and garbage collection can run between chunks.
+      if (state.memoryChunkCount % 32 === 0) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
     }
 
     state.receivedSize += data.byteLength;
@@ -488,6 +496,7 @@ class WebRTCManager {
 
     console.log('File transfer complete, reconstructing blob...');
     const fileBlob = new Blob(state.receivedBuffers, { type: metadata.mime });
+    state.receivedBuffers.length = 0;
 
     if (this.onFileTransferComplete) {
       this.onFileTransferComplete(fileBlob, metadata.name, {
@@ -759,43 +768,56 @@ class WebRTCManager {
     const channel = this.dataChannel;
 
     return new Promise((resolve, reject) => {
+      let pollTimer = null;
+      let settled = false;
+
       const cleanup = () => {
         channel.removeEventListener('bufferedamountlow', handleLow);
         channel.removeEventListener('close', handleClose);
         channel.removeEventListener('error', handleError);
         if (signal) signal.removeEventListener('abort', handleAbort);
+        if (pollTimer) clearInterval(pollTimer);
+      };
+
+      const finish = (callback, value) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        callback(value);
       };
 
       const handleLow = () => {
-        cleanup();
-        resolve();
+        if (channel.bufferedAmount <= channel.bufferedAmountLowThreshold) {
+          finish(resolve);
+        }
       };
 
       const handleClose = () => {
-        cleanup();
-        reject(new Error('Data connection closed during transfer.'));
+        finish(reject, new Error('Data connection closed during transfer.'));
       };
 
       const handleError = () => {
-        cleanup();
-        reject(new Error('Data connection error during transfer.'));
+        finish(reject, new Error('Data connection error during transfer.'));
       };
 
       const handleAbort = () => {
-        cleanup();
         const err = new Error('Transfer cancelled.');
         err.name = 'AbortError';
-        reject(err);
+        finish(reject, err);
       };
 
-      channel.addEventListener('bufferedamountlow', handleLow, { once: true });
-      channel.addEventListener('close', handleClose, { once: true });
-      channel.addEventListener('error', handleError, { once: true });
+      channel.addEventListener('bufferedamountlow', handleLow);
+      channel.addEventListener('close', handleClose);
+      channel.addEventListener('error', handleError);
       if (signal) signal.addEventListener('abort', handleAbort, { once: true });
 
       if (channel.bufferedAmount <= channel.bufferedAmountLowThreshold) {
         handleLow();
+        return;
       }
+
+      // Some browsers do not dispatch bufferedamountlow consistently under load.
+      pollTimer = setInterval(handleLow, 100);
     });
   }
 
