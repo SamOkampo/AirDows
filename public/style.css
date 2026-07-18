@@ -83,8 +83,38 @@ body {
 
 /* Header */
 .app-header {
+  position: relative;
   text-align: center;
   margin-bottom: 32px;
+}
+
+.pwa-install-button {
+  align-items: center;
+  background: rgba(22, 139, 255, 0.12);
+  border: 1px solid rgba(22, 139, 255, 0.38);
+  border-radius: 8px;
+  color: #7de8ff;
+  cursor: pointer;
+  display: inline-flex;
+  height: 36px;
+  justify-content: center;
+  position: absolute;
+  right: 0;
+  top: 0;
+  transition: var(--transition-smooth);
+  width: 36px;
+}
+
+.pwa-install-button:hover {
+  background: rgba(22, 139, 255, 0.22);
+  border-color: rgba(0, 229, 245, 0.7);
+  color: #00e5f5;
+  transform: translateY(-1px);
+}
+
+.pwa-install-button svg {
+  height: 18px;
+  width: 18px;
 }
 
 .logo {

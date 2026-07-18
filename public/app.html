@@ -7,6 +7,11 @@
   <link rel="icon" type="image/png" href="/assets/favicon.png">
   <link rel="manifest" href="/manifest.webmanifest">
   <meta name="theme-color" content="#0b1020">
+  <meta name="application-name" content="AirDows">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="apple-touch-icon" href="/assets/icon-192.png">
   <!-- Google Fonts & Tailwind/Bootstrap Style CSS -->
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
@@ -21,6 +26,9 @@
   <main class="app-container">
     <!-- Header -->
     <header class="app-header">
+      <button id="btn-install-app" class="pwa-install-button hidden" type="button" title="Instalar AirDows" aria-label="Instalar AirDows">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 19h14" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
       <div class="logo">
         <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
           <path d="M12 2L2 22H22L12 2Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -256,11 +264,6 @@
   <script src="js/socket-manager.js"></script>
   <script src="js/webrtc-manager.js"></script>
   <script src="js/app.js"></script>
-  <script>
-    if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
-    }
-  </script>
 
   <script>
     const i18n = {

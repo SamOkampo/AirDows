@@ -21,6 +21,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Transfer Elements
   const connectionStatusText = document.getElementById('connection-status-text');
+  const btnInstallApp = document.getElementById('btn-install-app');
   const btnDisconnect = document.getElementById('btn-disconnect');
   const airPet = document.getElementById('air-pet');
   const dropZone = document.getElementById('drop-zone');
@@ -79,6 +80,9 @@ document.addEventListener('DOMContentLoaded', () => {
   let wakeLock = null;
   let sharedFilesPending = [];
   let p2pConnected = false;
+  let deferredInstallPrompt = null;
+  let pendingServiceWorker = null;
+  let pwaUpdateDeferred = false;
 
   // --- HELPERS ---
   function translate(key) {
@@ -157,6 +161,76 @@ document.addEventListener('DOMContentLoaded', () => {
     } finally {
       wakeLock = null;
     }
+  }
+
+  function canApplyPwaUpdate() {
+    return !transferIsActive && !activeQueueItem && !isProcessingQueue;
+  }
+
+  function applyPendingPwaUpdate() {
+    if (!pendingServiceWorker) return;
+
+    if (!canApplyPwaUpdate()) {
+      pwaUpdateDeferred = true;
+      return;
+    }
+
+    pwaUpdateDeferred = false;
+    pendingServiceWorker.postMessage({ type: 'SKIP_WAITING' });
+    pendingServiceWorker = null;
+  }
+
+  function registerServiceWorker() {
+    if (!('serviceWorker' in navigator)) return;
+
+    navigator.serviceWorker.register('/sw.js').then((registration) => {
+      const handleWaitingWorker = (worker) => {
+        if (!worker || !navigator.serviceWorker.controller) return;
+        pendingServiceWorker = worker;
+        showToast('Actualización lista. Se aplicará cuando termine la cola.');
+        applyPendingPwaUpdate();
+      };
+
+      handleWaitingWorker(registration.waiting);
+
+      registration.addEventListener('updatefound', () => {
+        const installingWorker = registration.installing;
+        if (!installingWorker) return;
+
+        installingWorker.addEventListener('statechange', () => {
+          if (installingWorker.state === 'installed') {
+            handleWaitingWorker(registration.waiting);
+          }
+        });
+      });
+    }).catch((error) => {
+      console.info('Service Worker unavailable:', error.message);
+    });
+  }
+
+  function setupInstallPrompt() {
+    if (!btnInstallApp) return;
+
+    window.addEventListener('beforeinstallprompt', (event) => {
+      event.preventDefault();
+      deferredInstallPrompt = event;
+      btnInstallApp.classList.remove('hidden');
+    });
+
+    window.addEventListener('appinstalled', () => {
+      deferredInstallPrompt = null;
+      btnInstallApp.classList.add('hidden');
+      showToast('AirDows se instaló correctamente.');
+    });
+
+    btnInstallApp.addEventListener('click', async () => {
+      if (!deferredInstallPrompt) return;
+
+      deferredInstallPrompt.prompt();
+      await deferredInstallPrompt.userChoice;
+      deferredInstallPrompt = null;
+      btnInstallApp.classList.add('hidden');
+    });
   }
 
   async function restoreSharedFiles() {
@@ -322,6 +396,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     isProcessingQueue = false;
+    if (pwaUpdateDeferred) applyPendingPwaUpdate();
   }
 
   function appendHistoryItem(fileName, fileSize, type) {
@@ -466,6 +541,7 @@ document.addEventListener('DOMContentLoaded', () => {
     transferQueue = [];
     activeQueueItem = null;
     isProcessingQueue = false;
+    applyPendingPwaUpdate();
     renderQueue();
 
     if (sharedFilesPending.length) {
@@ -595,6 +671,7 @@ document.addEventListener('DOMContentLoaded', () => {
     activeTransferMode = 'idle';
     transferIsActive = false;
     releaseTransferWakeLock();
+    applyPendingPwaUpdate();
     setPetState('idle');
     progressCard.classList.add('hidden');
     networkDiagnostics.classList.add('hidden');
@@ -648,6 +725,7 @@ document.addEventListener('DOMContentLoaded', () => {
     activeTransferMode = 'idle';
     transferIsActive = false;
     releaseTransferWakeLock();
+    applyPendingPwaUpdate();
     setPetState('error');
   };
 
@@ -655,6 +733,7 @@ document.addEventListener('DOMContentLoaded', () => {
     activeTransferMode = 'idle';
     transferIsActive = false;
     releaseTransferWakeLock();
+    applyPendingPwaUpdate();
     setPetState('idle');
     progressCard.classList.add('hidden');
     networkDiagnostics.classList.add('hidden');
@@ -821,6 +900,16 @@ document.addEventListener('DOMContentLoaded', () => {
   // --- INITIATE CONNECTION ---
   socketManager.connect();
   restoreSharedFiles();
+  registerServiceWorker();
+  setupInstallPrompt();
+
+  window.addEventListener('offline', () => {
+    showToast('Sin conexión. La transferencia se reanudará cuando vuelva la red.');
+  });
+
+  window.addEventListener('online', () => {
+    showToast('Conexión recuperada.');
+  });
 
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && transferIsActive) {

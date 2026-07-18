@@ -6,6 +6,13 @@
   <meta name="description" content="AirDows transfers heavy files, photos and links between your mobile and PC with a direct P2P connection." data-i18n-meta="description">
   <title data-i18n="title">AirDows - AirDrop for Windows</title>
   <link rel="icon" type="image/png" href="/assets/favicon.png">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="theme-color" content="#0b1020">
+  <meta name="application-name" content="AirDows">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="apple-touch-icon" href="/assets/icon-192.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -297,6 +304,12 @@
 
     document.addEventListener('DOMContentLoaded', () => {
       translatePage();
+
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js').catch(() => {});
+        }, { once: true });
+      }
 
       const dropZone = document.getElementById('landing-drop-zone');
       const pet = document.getElementById('landing-pet');
