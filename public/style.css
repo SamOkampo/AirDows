@@ -1383,6 +1383,15 @@ body {
   grid-template-columns: minmax(0, 1fr) auto auto;
 }
 
+/* Keep only the useful transfer mode badge; speed is already shown by the file row. */
+.network-diagnostics .diagnostic-grid {
+  display: none;
+}
+
+.network-diagnostics {
+  margin-top: 12px;
+}
+
 .connection-status-pill {
   min-width: 0;
 }
