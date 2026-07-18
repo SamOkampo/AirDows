@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="AirDows transfers heavy files, photos and links between your mobile and PC with a direct P2P connection." data-i18n-meta="description">
+  <title data-i18n="title">AirDows - AirDrop for Windows</title>
+  <link rel="icon" type="image/png" href="/assets/favicon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Plus Jakarta Sans', 'ui-sans-serif', 'system-ui']
+          },
+          boxShadow: {
+            glow: '0 0 48px rgba(59, 130, 246, 0.35)',
+            purpleGlow: '0 0 60px rgba(168, 85, 247, 0.28)'
+          }
+        }
+      }
+    };
+  </script>
+  <script defer src="https://cloud.umami.is/script.js" data-website-id="09412ec8-2ab9-41f4-a833-21fdcf60bf41"></script>
+</head>
+<body class="min-h-screen overflow-x-hidden bg-[#060713] font-sans text-white antialiased">
+  <div class="pointer-events-none fixed inset-0 -z-10">
+    <div class="absolute left-1/2 top-[-18rem] h-[36rem] w-[36rem] -translate-x-1/2 rounded-full bg-blue-600/25 blur-3xl"></div>
+    <div class="absolute right-[-12rem] top-1/3 h-[34rem] w-[34rem] rounded-full bg-fuchsia-600/20 blur-3xl"></div>
+    <div class="absolute bottom-[-14rem] left-[-10rem] h-[32rem] w-[32rem] rounded-full bg-cyan-500/15 blur-3xl"></div>
+    <div class="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.08),transparent_32%),linear-gradient(rgba(255,255,255,0.035)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.035)_1px,transparent_1px)] bg-[size:auto,72px_72px,72px_72px]"></div>
+  </div>
+
+  <header class="mx-auto flex w-full max-w-7xl items-center justify-between px-5 py-5 sm:px-8 lg:px-10">
+    <a href="index.html" class="group flex items-center gap-3" aria-label="AirDows home" data-i18n-aria="header_logo_aria">
+      <span class="flex h-10 w-10 items-center justify-center rounded-2xl border border-white/15 bg-white/10 shadow-glow backdrop-blur-xl transition group-hover:border-blue-300/50">
+        <svg class="h-6 w-6 text-blue-300" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M12 3L3 20h18L12 3Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+          <path d="M12 9l4.7 9.2H7.3L12 9Z" fill="currentColor" opacity="0.28"/>
+          <path d="M12 16V11" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+      </span>
+      <span class="text-lg font-extrabold tracking-tight sm:text-xl">AirDows</span>
+    </a>
+
+    <a href="app.html" class="rounded-full border border-white/15 bg-white/10 px-5 py-2.5 text-sm font-bold text-white shadow-purpleGlow backdrop-blur-xl transition hover:border-blue-300/50 hover:bg-white/15" data-i18n="open_app">
+      Open App
+    </a>
+  </header>
+
+  <main>
+    <section class="mx-auto grid min-h-[calc(100vh-5rem)] w-full max-w-7xl items-center gap-12 px-5 pb-16 pt-8 sm:px-8 lg:grid-cols-[1.05fr_0.95fr] lg:px-10 lg:pb-20">
+      <div class="mx-auto max-w-4xl text-center lg:mx-0 lg:text-left">
+        <div class="mb-7 inline-flex items-center gap-2 rounded-full border border-blue-300/20 bg-blue-400/10 px-4 py-2 text-sm font-semibold text-blue-100 shadow-glow backdrop-blur-xl">
+          <span class="h-2 w-2 rounded-full bg-emerald-300 shadow-[0_0_18px_rgba(110,231,183,0.9)]"></span>
+          <span data-i18n="hero_badge">Direct P2P for Windows, Android and iPhone</span>
+        </div>
+
+        <h1 class="text-balance text-5xl font-extrabold leading-[0.96] tracking-tight text-white sm:text-6xl md:text-7xl lg:text-8xl" data-i18n="hero_title">
+          The magic of AirDrop, now on your Windows.
+        </h1>
+
+        <p class="mx-auto mt-7 max-w-2xl text-pretty text-lg leading-8 text-slate-300 sm:text-xl lg:mx-0" data-i18n="hero_desc">
+          Transfer heavy videos, photos and links between your phone and your PC in seconds. No cables, no clouds, and no quality loss.
+        </p>
+
+        <div class="mt-10 flex flex-col items-center gap-4 sm:flex-row sm:justify-center lg:justify-start">
+          <a href="app.html" class="group relative inline-flex w-full items-center justify-center overflow-hidden rounded-full bg-gradient-to-r from-blue-500 via-indigo-500 to-fuchsia-500 px-8 py-4 text-base font-extrabold text-white shadow-glow transition hover:scale-[1.02] hover:shadow-purpleGlow sm:w-auto">
+            <span class="absolute inset-0 translate-x-[-120%] bg-gradient-to-r from-transparent via-white/30 to-transparent transition duration-700 group-hover:translate-x-[120%]"></span>
+            <span class="relative" data-i18n="hero_btn">Start Free Transfer</span>
+          </a>
+        </div>
+      </div>
+
+      <div class="relative mx-auto w-full max-w-xl lg:max-w-none">
+        <div class="absolute -inset-5 rounded-[2rem] bg-gradient-to-r from-blue-500/20 to-fuchsia-500/20 blur-2xl"></div>
+        <div class="relative overflow-hidden rounded-[2rem] border border-white/15 bg-white/[0.07] p-4 shadow-2xl backdrop-blur-2xl">
+          <div class="rounded-[1.5rem] border border-white/10 bg-slate-950/70 p-5">
+            <div class="mb-6 flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <span class="h-3 w-3 rounded-full bg-red-400"></span>
+                <span class="h-3 w-3 rounded-full bg-amber-300"></span>
+                <span class="h-3 w-3 rounded-full bg-emerald-400"></span>
+              </div>
+              <span class="rounded-full bg-emerald-400/10 px-3 py-1 text-xs font-bold text-emerald-200" data-i18n="conn_active">Active connection</span>
+            </div>
+
+            <div class="grid gap-4 sm:grid-cols-2">
+              <div class="rounded-3xl border border-white/10 bg-white/[0.06] p-5">
+                <div class="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-500/15 text-blue-200">
+                  <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M12 16V4m0 0L7 9m5-5 5 5M5 16v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                </div>
+                <p class="text-sm font-bold text-white">Video_4K_final.mov</p>
+                <p class="mt-1 text-xs text-slate-400" data-i18n="video_desc">2.1 GB direct to PC</p>
+                <div class="mt-5 h-2 overflow-hidden rounded-full bg-white/10">
+                  <div class="h-full w-[82%] rounded-full bg-gradient-to-r from-blue-400 to-fuchsia-400"></div>
+                </div>
+              </div>
+
+              <div class="rounded-3xl border border-white/10 bg-white/[0.06] p-5">
+                <div class="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-fuchsia-500/15 text-fuchsia-200">
+                  <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2" stroke="currentColor" stroke-width="2"/>
+                    <rect x="9" y="3" width="6" height="4" rx="1" stroke="currentColor" stroke-width="2"/>
+                  </svg>
+                </div>
+                <p class="text-sm font-bold text-white">air.dows/link</p>
+                <p class="mt-1 text-xs text-slate-400" data-i18n="clipboard_sync">Synced clipboard</p>
+                <button class="mt-5 w-full rounded-full bg-white/10 px-4 py-2 text-xs font-bold text-white" data-i18n="copy">Copy</button>
+              </div>
+            </div>
+
+            <div class="mt-4 rounded-3xl border border-emerald-300/20 bg-emerald-400/10 p-5">
+              <div class="flex items-center justify-between gap-4">
+                <div>
+                  <p class="text-sm font-bold text-emerald-100" data-i18n="transfer_completed">Transfer completed</p>
+                  <p class="mt-1 text-xs text-emerald-200/70" data-i18n="transfer_success_desc">No compression, no cloud, no friction.</p>
+                </div>
+                <span class="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-300 text-slate-950">
+                  <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M20 6 9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="border-y border-white/10 bg-white/[0.03]">
+      <div class="mx-auto max-w-5xl px-5 py-20 text-center sm:px-8 lg:px-10">
+        <h2 class="text-3xl font-extrabold tracking-tight text-white sm:text-5xl" data-i18n="section_title">Designed for those who hate waiting.</h2>
+        <p class="mx-auto mt-6 max-w-3xl text-lg leading-8 text-slate-300" data-i18n="section_desc">
+          Tired of sending videos via WhatsApp losing quality or filling your Drive for a 2GB file? AirDows connects your devices directly.
+        </p>
+      </div>
+    </section>
+
+    <section class="mx-auto max-w-7xl px-5 py-20 sm:px-8 lg:px-10">
+      <div class="grid gap-5 md:grid-cols-3">
+        <article class="rounded-3xl border border-white/10 bg-white/[0.06] p-7 shadow-2xl backdrop-blur-xl transition hover:-translate-y-1 hover:border-blue-300/30">
+          <div class="mb-6 flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-500/15 text-blue-200">
+            <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M4 7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7Z" stroke="currentColor" stroke-width="2"/>
+              <path d="m8 13 2.2-2.2a1 1 0 0 1 1.4 0L16 15" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <h3 class="text-xl font-extrabold text-white" data-i18n="feat1_title">100% Original Quality</h3>
+          <p class="mt-4 leading-7 text-slate-300" data-i18n="feat1_desc">We don't compress your files.</p>
+        </article>
+
+        <article class="rounded-3xl border border-white/10 bg-white/[0.06] p-7 shadow-2xl backdrop-blur-xl transition hover:-translate-y-1 hover:border-fuchsia-300/30">
+          <div class="mb-6 flex h-12 w-12 items-center justify-center rounded-2xl bg-fuchsia-500/15 text-fuchsia-200">
+            <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M12 3 5 6v5c0 4.5 2.8 8.4 7 10 4.2-1.6 7-5.5 7-10V6l-7-3Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+              <path d="M9.5 12.5 11 14l3.5-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <h3 class="text-xl font-extrabold text-white" data-i18n="feat2_title">Absolute Privacy</h3>
+          <p class="mt-4 leading-7 text-slate-300" data-i18n="feat2_desc">Direct P2P connection. Your files are not stored on servers.</p>
+        </article>
+
+        <article class="rounded-3xl border border-white/10 bg-white/[0.06] p-7 shadow-2xl backdrop-blur-xl transition hover:-translate-y-1 hover:border-cyan-300/30">
+          <div class="mb-6 flex h-12 w-12 items-center justify-center rounded-2xl bg-cyan-500/15 text-cyan-200">
+            <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2" stroke="currentColor" stroke-width="2"/>
+              <rect x="9" y="3" width="6" height="4" rx="1" stroke="currentColor" stroke-width="2"/>
+              <path d="M9 13h6M9 17h4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <h3 class="text-xl font-extrabold text-white" data-i18n="feat3_title">Universal Clipboard</h3>
+          <p class="mt-4 leading-7 text-slate-300" data-i18n="feat3_desc">Copy on your phone, paste on your PC instantly.</p>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <footer class="border-t border-white/10 px-5 py-8 text-center text-sm text-slate-500">
+    <p data-i18n="footer">© 2026 AirDows. All rights reserved.</p>
+  </footer>
+
+  <script>
+    const i18n = {
+      en: {
+        title: "AirDows - AirDrop for Windows",
+        description: "AirDows transfers heavy files, photos and links between your mobile and PC with a direct P2P connection.",
+        header_logo_aria: "AirDows Home",
+        open_app: "Open App",
+        hero_badge: "Direct P2P for Windows, Android and iPhone",
+        hero_title: "The magic of AirDrop, now on your Windows.",
+        hero_desc: "Transfer heavy videos, photos and links between your phone and your PC in seconds. No cables, no clouds, and no quality loss.",
+        hero_btn: "Start Free Transfer",
+        conn_active: "Active connection",
+        video_desc: "2.1 GB direct to PC",
+        clipboard_sync: "Synced clipboard",
+        copy: "Copy",
+        transfer_completed: "Transfer completed",
+        transfer_success_desc: "No compression, no cloud, no friction.",
+        section_title: "Designed for those who hate waiting.",
+        section_desc: "Tired of sending videos via WhatsApp losing quality or filling your Drive for a 2GB file? AirDows connects your devices directly.",
+        feat1_title: "100% Original Quality",
+        feat1_desc: "We don't compress your files.",
+        feat2_title: "Absolute Privacy",
+        feat2_desc: "Direct P2P connection. Your files are not stored on servers.",
+        feat3_title: "Universal Clipboard",
+        feat3_desc: "Copy on your phone, paste on your PC instantly.",
+        footer: "© 2026 AirDows. All rights reserved."
+      },
+      es: {
+        title: "AirDows - AirDrop para Windows",
+        description: "AirDows transfiere archivos pesados, fotos y enlaces entre tu celular y tu PC con una conexion P2P directa.",
+        header_logo_aria: "AirDows inicio",
+        open_app: "Abrir App",
+        hero_badge: "P2P directo para Windows, Android y iPhone",
+        hero_title: "La magia de AirDrop, ahora en tu Windows.",
+        hero_desc: "Transfiere videos pesados, fotos y enlaces entre tu celular y tu PC en segundos. Sin cables, sin nubes y sin perder calidad.",
+        hero_btn: "Iniciar Transferencia Gratis",
+        conn_active: "Conexión activa",
+        video_desc: "2.1 GB directo al PC",
+        clipboard_sync: "Portapapeles sincronizado",
+        copy: "Copiar",
+        transfer_completed: "Transferencia completada",
+        transfer_success_desc: "Sin compresión, sin nube, sin fricción.",
+        section_title: "Diseñado para los que odian esperar.",
+        section_desc: "¿Harto de enviarte videos por WhatsApp perdiendo calidad o llenando tu Drive por un archivo de 2GB? AirDows conecta tus dispositivos directamente.",
+        feat1_title: "Calidad 100% Original",
+        feat1_desc: "No comprimimos tus archivos.",
+        feat2_title: "Privacidad Absoluta",
+        feat2_desc: "Conexión P2P directa. Tus archivos no se guardan en servidores.",
+        feat3_title: "Portapapeles Universal",
+        feat3_desc: "Copia en tu teléfono, pega en tu PC al instante.",
+        footer: "© 2026 AirDows. Todos los derechos reservados."
+      }
+    };
+
+    function translatePage() {
+      const userLang = navigator.language || navigator.userLanguage;
+      const lang = userLang.startsWith('es') ? 'es' : 'en';
+      document.documentElement.lang = lang;
+
+      // Text content translations
+      document.querySelectorAll('[data-i18n]').forEach(el => {
+        const key = el.getAttribute('data-i18n');
+        if (i18n[lang][key]) el.textContent = i18n[lang][key];
+      });
+
+      // ARIA labels
+      document.querySelectorAll('[data-i18n-aria]').forEach(el => {
+        const key = el.getAttribute('data-i18n-aria');
+        if (i18n[lang][key]) el.setAttribute('aria-label', i18n[lang][key]);
+      });
+
+      // Meta descriptions
+      document.querySelectorAll('[data-i18n-meta]').forEach(el => {
+        const key = el.getAttribute('data-i18n-meta');
+        if (i18n[lang][key]) el.setAttribute('content', i18n[lang][key]);
+      });
+
+      // Title
+      if (i18n[lang].title) document.title = i18n[lang].title;
+    }
+
+    document.addEventListener('DOMContentLoaded', translatePage);
+  </script>
+</body>
+</html>

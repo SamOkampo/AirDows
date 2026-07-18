@@ -1,0 +1,14 @@
+{
+  "name": "airdrop-mvp",
+  "version": "1.0.0",
+  "description": "An AirDrop clone using Node.js, Socket.io, and WebRTC for direct file sharing.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "express-rate-limit": "^8.6.0",
+    "socket.io": "^4.7.5"
+  }
+}

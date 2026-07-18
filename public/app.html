@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title data-i18n="title">AirDows - P2P File Transfer</title>
+  <link rel="icon" type="image/png" href="/assets/favicon.png">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="theme-color" content="#0b1020">
+  <!-- Google Fonts & Tailwind/Bootstrap Style CSS -->
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <script defer src="https://cloud.umami.is/script.js" data-website-id="09412ec8-2ab9-41f4-a833-21fdcf60bf41"></script>
+</head>
+<body>
+  <div class="background-decor">
+    <div class="circle circle-1"></div>
+    <div class="circle circle-2"></div>
+  </div>
+
+  <main class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="logo">
+        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M12 2L2 22H22L12 2Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M12 8L18 20H6L12 8Z" fill="currentColor" opacity="0.3"/>
+          <path d="M12 18V12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          <circle cx="12" cy="9" r="1" fill="currentColor"/>
+        </svg>
+        <h1>AirDows</h1>
+      </div>
+      <p class="subtitle" data-i18n="subtitle">Direct Peer-to-Peer Secure File Transfer</p>
+    </header>
+
+    <!-- Error Toast Notification -->
+    <div id="error-toast" class="toast hidden">
+      <div class="toast-content">
+        <svg viewBox="0 0 24 24" class="icon-error"><path d="M12 9V14M12 17.5V18M12 3C7.03 3 3 7.03 3 12C3 16.97 7.03 21 12 21C16.97 21 21 16.97 21 12C21 7.03 16.97 3 12 3Z" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <span id="error-text" data-i18n="toast_error">An error occurred</span>
+      </div>
+    </div>
+
+    <!-- MAIN VIEWS -->
+    <section class="card-glass">
+      
+      <!-- 1. SETUP / PAIRING SCREEN -->
+      <div id="setup-view" class="view">
+        <div class="pairing-grid">
+          
+          <!-- Column A: Receive (Generate Code) -->
+          <div class="pairing-col">
+            <div class="col-header">
+              <span class="badge badge-receive" data-i18n="receive_badge">Receive</span>
+              <h2 data-i18n="receive_title">Set up as Receiver</h2>
+              <p data-i18n="receive_desc">Generate a secure 4-digit code or scan the QR code to connect another device.</p>
+            </div>
+            
+            <div id="code-generator-box" class="code-box">
+              <button id="btn-generate" class="btn btn-primary">
+                <span data-i18n="btn_generate">Generate Pairing Code</span>
+              </button>
+              
+              <div id="code-display-wrapper" class="hidden">
+                <div class="digits-container">
+                  <span class="digit-box" id="d1">-</span>
+                  <span class="digit-box" id="d2">-</span>
+                  <span class="digit-box" id="d3">-</span>
+                  <span class="digit-box" id="d4">-</span>
+                </div>
+                
+                <div class="qr-container">
+                  <div id="qrcode"></div>
+                  <p class="qr-hint" data-i18n="qr_hint">Scan with mobile to pair instantly</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Divider -->
+          <div class="pairing-divider">
+            <span class="divider-line"></span>
+            <span class="divider-text" data-i18n="divider_or">OR</span>
+            <span class="divider-line"></span>
+          </div>
+
+          <!-- Column B: Send (Join Code) -->
+          <div class="pairing-col">
+            <div class="col-header">
+              <span class="badge badge-send" data-i18n="send_badge">Send</span>
+              <h2 data-i18n="send_title">Connect to Receiver</h2>
+              <p data-i18n="send_desc">Enter the 4-digit pairing code displayed on the receiving device to establish a direct connection.</p>
+            </div>
+
+            <div class="code-input-box">
+              <div class="input-wrapper">
+                <input type="text" id="join-code-input" maxlength="4" placeholder="Enter 4-Digit Code" data-i18n-placeholder="join_placeholder" autocomplete="off" oninput="this.value = this.value.replace(/[^0-9]/g, '')">
+              </div>
+              <button id="btn-join" class="btn btn-secondary">
+                <span data-i18n="btn_join">Connect Device</span>
+              </button>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- 2. CONNECTED / TRANSFER SCREEN -->
+      <div id="transfer-view" class="view hidden">
+        <div class="transfer-header">
+          <div class="connection-status-pill">
+            <span class="status-dot pulsing"></span>
+            <span id="connection-status-text" data-i18n="conn_status">Connected to Remote Peer</span>
+          </div>
+          <div id="air-pet" class="air-pet is-connecting" aria-label="AirDows assistant" role="img">
+            <span class="air-pet-antenna"></span>
+            <span class="air-pet-face"><i></i><i></i></span>
+            <span class="air-pet-body"></span>
+          </div>
+          <button id="btn-disconnect" class="btn-text" title="Disconnect pairing" data-i18n-title="btn_disconnect_title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18.36 6.64a9 9 0 1 1-12.73 0M12 2v10" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span data-i18n="btn_disconnect">Disconnect</span>
+          </button>
+        </div>
+
+        <div class="transfer-body">
+          <div class="transfer-tools">
+            <!-- Drag and Drop Zone -->
+            <div id="drop-zone" class="drop-zone">
+              <input type="file" id="file-input" class="hidden" multiple>
+              <div class="drop-zone-content">
+                <div class="drop-icon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                    <polyline points="17 8 12 3 7 8"/>
+                    <line x1="12" y1="3" x2="12" y2="15"/>
+                  </svg>
+                </div>
+                <h3 data-i18n="drop_zone_title">Drag & Drop Files Here</h3>
+                <p><span data-i18n="drop_zone_subtitle_prefix">or</span> <span class="highlight" data-i18n="drop_zone_highlight">browse your files</span></p>
+                <span class="file-limits" data-i18n="drop_zone_limits">Direct P2P transfer, no size limits</span>
+              </div>
+            </div>
+
+            <!-- Universal Clipboard -->
+            <div class="clipboard-panel">
+              <div class="clipboard-panel-header">
+                <div>
+                  <span class="badge badge-clipboard" data-i18n="clipboard_badge">Clipboard</span>
+                  <h3 data-i18n="clipboard_title">Universal Clipboard</h3>
+                </div>
+                <div class="clipboard-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/>
+                    <rect x="9" y="3" width="6" height="4" rx="1"/>
+                  </svg>
+                </div>
+              </div>
+              <textarea id="clipboard-text-input" class="clipboard-textarea" rows="5" placeholder="Paste text or a link to share it with the other device" data-i18n-placeholder="clipboard_placeholder"></textarea>
+              <button id="btn-send-text" class="btn btn-primary" type="button">
+                <span data-i18n="btn_send_text">Send Text</span>
+              </button>
+              <div id="clipboard-feed" class="clipboard-feed" aria-live="polite"></div>
+            </div>
+          </div>
+<!-- Contenedor del Historial de Sesión -->
+<div id="history-container" class="history-card hidden">
+  <div class="history-header">
+    <h3 data-i18n="history_title">Session History</h3>
+  </div>
+  <div id="history-list" class="history-list">
+    <!-- Los elementos enviados y recibidos se insertarán aquí dinámicamente -->
+  </div>
+</div>
+          <!-- Transfer Progress Card -->
+          <div id="progress-card" class="progress-card hidden">
+            <div class="progress-info">
+              <div class="file-icon-placeholder">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+              </div>
+              <div class="progress-details">
+                <h4 id="progress-file-name" class="truncate">filename.zip</h4>
+                <div class="meta-row">
+                  <span id="progress-direction" data-i18n="sending">Sending...</span>
+                  <span id="progress-bytes">0 MB / 0 MB</span>
+                </div>
+              </div>
+              <div class="speed-indicator" id="progress-speed">0 MB/s</div>
+              <button id="btn-cancel-transfer" class="btn-cancel-transfer" type="button" data-i18n-title="btn_cancel_transfer_title" title="Cancel current upload">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true">
+                  <path d="M18 6 6 18M6 6l12 12" stroke-linecap="round"/>
+                </svg>
+                <span data-i18n="btn_cancel_transfer">Cancel</span>
+              </button>
+            </div>
+
+            <!-- Progress Bar -->
+            <div class="progress-bar-wrapper">
+              <div id="progress-bar-fill" class="progress-bar-fill" style="width: 0%"></div>
+            </div>
+            <div class="progress-percentage" id="progress-percent">0%</div>
+            <div id="network-diagnostics" class="network-diagnostics hidden">
+              <div class="diagnostic-chip pro-mode">
+                <span class="diagnostic-dot"></span>
+                <span id="diagnostic-mode">Modo Pro</span>
+              </div>
+            </div>
+          </div>
+
+          <div id="queue-container" class="queue-card hidden">
+            <div class="queue-header">
+              <div>
+                <h3 data-i18n="queue_title">Upload Queue</h3>
+                <p id="queue-summary">0 files waiting</p>
+              </div>
+              <button id="btn-add-to-queue" class="btn-add-queue" type="button" data-i18n="btn_add_to_queue">Add files</button>
+            </div>
+            <div id="queue-list" class="queue-list" aria-live="polite"></div>
+          </div>
+
+          <!-- Completed/Download Dialog -->
+          <div id="completed-card" class="completed-card hidden">
+            <div class="success-header">
+              <div class="success-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+              </div>
+              <h3 data-i18n="transfer_completed">Transfer Completed!</h3>
+            </div>
+            <div class="completed-file-info">
+              <p id="completed-file-name">filename.zip</p>
+              <span id="completed-file-size">0 MB</span>
+            </div>
+            <div class="action-buttons">
+              <a id="btn-download" class="btn btn-primary" download>
+                <span data-i18n="btn_download">Download File</span>
+              </a>
+              <button id="btn-reset-transfer" class="btn btn-secondary">
+                <span data-i18n="btn_transfer_another">Transfer Another File</span>
+              </button>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+    </section>
+  </main>
+
+  <!-- External Library CDNs: Socket.io & QRCode.js -->
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+
+  <!-- Modular Scripts -->
+  <script src="js/socket-manager.js"></script>
+  <script src="js/webrtc-manager.js"></script>
+  <script src="js/app.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
+    }
+  </script>
+
+  <script>
+    const i18n = {
+      en: {
+        title: "AirDows - P2P File Transfer",
+        subtitle: "Direct Peer-to-Peer Secure File Transfer",
+        receive_badge: "Receive",
+        receive_title: "Set up as Receiver",
+        receive_desc: "Generate a secure 4-digit code or scan the QR code to connect another device.",
+        btn_generate: "Generate Pairing Code",
+        qr_hint: "Scan with mobile to pair instantly",
+        divider_or: "OR",
+        send_badge: "Send",
+        send_title: "Connect to Receiver",
+        send_desc: "Enter the 4-digit pairing code displayed on the receiving device to establish a direct connection.",
+        join_placeholder: "Enter 4-Digit Code",
+        btn_join: "Connect Device",
+        conn_status: "Connected to Remote Peer",
+        btn_disconnect: "Disconnect",
+        btn_disconnect_title: "Disconnect pairing",
+        drop_zone_title: "Drag & Drop Files Here",
+        drop_zone_subtitle_prefix: "or",
+        drop_zone_highlight: "browse your files",
+        drop_zone_limits: "Direct P2P transfer, no size limits",
+        clipboard_badge: "Clipboard",
+        clipboard_title: "Universal Clipboard",
+        clipboard_placeholder: "Paste text or a link to share it with the other device",
+        btn_send_text: "Send Text",
+        history_title: "Session History",
+        transfer_completed: "Transfer Completed!",
+        btn_download: "Download File",
+        btn_transfer_another: "Transfer Another File",
+        queue_title: "Upload Queue",
+        queue_waiting: "files waiting",
+        queue_sending: "Sending",
+        queue_pending: "Pending",
+        queue_done: "Done",
+        queue_cancelled: "Cancelled",
+        queue_error: "Error",
+        btn_cancel_transfer: "Cancel",
+        btn_cancel_transfer_title: "Cancel current upload",
+        btn_cancel_queued: "Cancel queued file",
+        btn_add_to_queue: "Add files",
+        transfer_cancelled: "Transfer cancelled.",
+        remote_transfer_cancelled: "The other device cancelled the transfer.",
+        diagnostic_connection: "Connection",
+        diagnostic_quality: "Quality",
+        diagnostic_speed: "Speed",
+        pro_mode_disk: "Pro Mode: direct to disk",
+        pro_mode_memory: "Compatibility mode: memory",
+        pro_mode_send: "High-performance send",
+        saved_to_disk: "Saved directly to disk",
+        // Dynamic strings for JS
+        toast_error: "An error occurred",
+        toast_copied: "Text copied to clipboard.",
+        toast_copy_fail: "Could not copy text from this browser.",
+        socket_disconnect: "Disconnected from signaling server. Trying to reconnect...",
+        conn_connecting: "Connecting and establishing P2P channel...",
+        peer_disconnected: "Peer disconnected from this session.",
+        p2p_active: "Secured P2P Connection Active",
+        p2p_lost: "P2P Connection lost.",
+        sending: "Sending data...",
+        receiving: "Receiving data...",
+        sent_success: "Sent Successfully",
+        invalid_code: "Please enter a valid 4-digit code.",
+        empty_clipboard: "Write text or paste a link before sending.",
+        send_fail: "Could not send text: ",
+        transfer_fail: "Failed to send file: ",
+        incoming_label: "Received",
+        outgoing_label: "Sent",
+        btn_copy: "Copy",
+        qr_library_fail: "QR code library failed to load. Enter the pairing code manually."
+      },
+      es: {
+        title: "AirDows - Transferencia de Archivos P2P",
+        subtitle: "Transferencia de archivos segura directa de punto a punto",
+        receive_badge: "Recibir",
+        receive_title: "Configurar como Receptor",
+        receive_desc: "Genera un código seguro de 4 dígitos o escanea el código QR para conectar otro dispositivo.",
+        btn_generate: "Generar código de emparejamiento",
+        qr_hint: "Escanea con el móvil para emparejar al instante",
+        divider_or: "O",
+        send_badge: "Enviar",
+        send_title: "Conectar al Receptor",
+        send_desc: "Introduce el código de emparejamiento de 4 dígitos que aparece en el dispositivo receptor para establecer una conexión directa.",
+        join_placeholder: "Introduce el código de 4 dígitos",
+        btn_join: "Conectar dispositivo",
+        conn_status: "Conectado al par remoto",
+        btn_disconnect: "Desconectar",
+        btn_disconnect_title: "Desconectar emparejamiento",
+        drop_zone_title: "Arrastra y suelta archivos aquí",
+        drop_zone_subtitle_prefix: "o",
+        drop_zone_highlight: "busca tus archivos",
+        drop_zone_limits: "Transferencia P2P directa, sin límites de tamaño",
+        clipboard_badge: "Portapapeles",
+        clipboard_title: "Portapapeles Universal",
+        clipboard_placeholder: "Pega texto o un enlace para compartirlo con el otro dispositivo",
+        btn_send_text: "Enviar Texto",
+        history_title: "Historial de la Sesión",
+        transfer_completed: "¡Transferencia completada!",
+        btn_download: "Descargar archivo",
+        btn_transfer_another: "Transferir otro archivo",
+        queue_title: "Cola de subida",
+        queue_waiting: "archivos en espera",
+        queue_sending: "Enviando",
+        queue_pending: "En cola",
+        queue_done: "Completado",
+        queue_cancelled: "Cancelado",
+        queue_error: "Error",
+        btn_cancel_transfer: "Cancelar",
+        btn_cancel_transfer_title: "Cancelar subida actual",
+        btn_cancel_queued: "Cancelar archivo en cola",
+        btn_add_to_queue: "Agregar archivos",
+        transfer_cancelled: "Transferencia cancelada.",
+        remote_transfer_cancelled: "El otro dispositivo canceló la transferencia.",
+        diagnostic_connection: "Conexión",
+        diagnostic_quality: "Calidad",
+        diagnostic_speed: "Velocidad",
+        pro_mode_disk: "Modo Pro: directo al disco",
+        pro_mode_memory: "Modo compatibilidad: memoria",
+        pro_mode_send: "Envío de alto rendimiento",
+        saved_to_disk: "Guardado directo al disco",
+        // Dynamic strings for JS
+        toast_error: "Ocurrió un error",
+        toast_copied: "Texto copiado al portapapeles.",
+        toast_copy_fail: "No se pudo copiar el texto desde este navegador.",
+        socket_disconnect: "Desconectado del servidor de señalización. Intentando reconectar...",
+        conn_connecting: "Conectando y estableciendo canal P2P...",
+        peer_disconnected: "El par se ha desconectado de esta sesión.",
+        p2p_active: "Conexión P2P segura activa",
+        p2p_lost: "Conexión P2P perdida.",
+        sending: "Enviando datos...",
+        receiving: "Recibiendo datos...",
+        sent_success: "Enviado con éxito",
+        invalid_code: "Por favor, introduce un código válido de 4 dígitos.",
+        empty_clipboard: "Escribe texto o pega un enlace antes de enviarlo.",
+        send_fail: "No se pudo enviar el texto: ",
+        transfer_fail: "Error al enviar el archivo: ",
+        incoming_label: "Recibido",
+        outgoing_label: "Enviado",
+        btn_copy: "Copiar",
+        qr_library_fail: "No se pudo cargar la librería QR. Introduce el código manualmente."
+      }
+    };
+
+    let currentLang = (navigator.language || navigator.userLanguage).startsWith('es') ? 'es' : 'en';
+
+    function t(key) {
+      return i18n[currentLang][key] || key;
+    }
+
+    function translatePage() {
+      document.documentElement.lang = currentLang;
+      document.querySelectorAll('[data-i18n]').forEach(el => {
+        const key = el.getAttribute('data-i18n');
+        if (i18n[currentLang][key]) el.textContent = i18n[currentLang][key];
+      });
+      document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+        const key = el.getAttribute('data-i18n-placeholder');
+        if (i18n[currentLang][key]) el.placeholder = i18n[currentLang][key];
+      });
+      document.querySelectorAll('[data-i18n-title]').forEach(el => {
+        const key = el.getAttribute('data-i18n-title');
+        if (i18n[currentLang][key]) el.title = i18n[currentLang][key];
+      });
+      if (i18n[currentLang].title) document.title = i18n[currentLang].title;
+    }
+
+    // Bridge for app.js dynamic strings
+    // We proxy the textContent of key elements to auto-translate them if they match our dictionary
+    function setupDynamicBridge() {
+      const elementsToWatch = [
+        'connection-status-text',
+        'error-text',
+        'progress-direction',
+        'completed-file-size'
+      ];
+
+      const reverseDictionary = {};
+      Object.keys(i18n.en).forEach(key => {
+        reverseDictionary[i18n.en[key]] = key;
+      });
+      // Also add some Spanish keys that might be in app.js
+      Object.keys(i18n.es).forEach(key => {
+        if (typeof i18n.es[key] === 'string') {
+          reverseDictionary[i18n.es[key]] = key;
+        }
+      });
+
+      elementsToWatch.forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+
+        const observer = new MutationObserver((mutations) => {
+          mutations.forEach((mutation) => {
+            if (mutation.type === 'childList' || mutation.type === 'characterData') {
+              const text = el.textContent.trim();
+              // Prevent infinite loop: only translate if it's not already the translated version
+              // This is a bit tricky, so we check if the text exists in our English OR Spanish values
+              for (const [enVal, key] of Object.entries(reverseDictionary)) {
+                if (text === enVal && i18n[currentLang][key] !== text) {
+                  el.textContent = i18n[currentLang][key];
+                  break;
+                }
+              }
+              
+              // Handle special cases with dynamic data like "Failed to send file: [ERROR]"
+              if (text.startsWith('Failed to send file:')) {
+                 el.textContent = t('transfer_fail') + text.replace('Failed to send file:', '');
+              } else if (text.startsWith('No se pudo enviar el texto:')) {
+                 el.textContent = t('send_fail') + text.replace('No se pudo enviar el texto:', '');
+              }
+            }
+          });
+        });
+
+        observer.observe(el, { childList: true, characterData: true, subtree: true });
+      });
+
+      // Special handling for clipboard messages which are created dynamically
+      const feedObserver = new MutationObserver((mutations) => {
+        mutations.forEach((mutation) => {
+          mutation.addedNodes.forEach(node => {
+            if (node.nodeType === 1 && node.classList.contains('clipboard-message-card')) {
+              const label = node.querySelector('.clipboard-message-label');
+              const copyBtn = node.querySelector('.clipboard-copy-btn');
+              if (label) {
+                const key = label.textContent.includes('Recibido') || label.textContent.includes('Received') ? 'incoming_label' : 'outgoing_label';
+                label.textContent = t(key);
+              }
+              if (copyBtn) {
+                copyBtn.textContent = t('btn_copy');
+              }
+            }
+          });
+        });
+      });
+      const feed = document.getElementById('clipboard-feed');
+      if (feed) feedObserver.observe(feed, { childList: true });
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      translatePage();
+      setupDynamicBridge();
+    });
+  </script>
+</body>
+</html>
