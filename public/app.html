@@ -117,6 +117,10 @@
             <span class="air-pet-face"><i></i><i></i></span>
             <span class="air-pet-body"></span>
           </div>
+          <label class="ai-toggle" title="Sugerencias locales de archivos">
+            <input id="local-ai-toggle" type="checkbox" checked>
+            <span>IA local</span>
+          </label>
           <button id="btn-disconnect" class="btn-text" title="Disconnect pairing" data-i18n-title="btn_disconnect_title">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18.36 6.64a9 9 0 1 1-12.73 0M12 2v10" stroke-linecap="round" stroke-linejoin="round"/></svg>
             <span data-i18n="btn_disconnect">Disconnect</span>
@@ -250,6 +254,7 @@
   <script src="/socket.io/socket.io.js"></script>
   <script src="js/qrcode-generator.js"></script>
   <script src="js/qr-manager.js"></script>
+  <script src="js/local-ai-manager.js"></script>
 
   <!-- Modular Scripts -->
   <script src="js/socket-manager.js"></script>

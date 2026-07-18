@@ -828,7 +828,7 @@ body {
 
 .queue-item {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
   align-items: center;
   gap: 12px;
   background: rgba(255, 255, 255, 0.04);
@@ -1430,10 +1430,35 @@ body {
   white-space: nowrap;
 }
 
+.ai-toggle {
+  align-items: center;
+  color: #b8c0d0;
+  cursor: pointer;
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 0.75rem;
+  font-weight: 700;
+  gap: 7px;
+  white-space: nowrap;
+}
+
+.ai-toggle input {
+  accent-color: #25e6a4;
+  height: 15px;
+  margin: 0;
+  width: 15px;
+}
+
 @media (max-width: 420px) {
   .transfer-header {
     gap: 7px;
     grid-template-columns: minmax(0, 1fr) auto auto;
+  }
+
+  .ai-toggle {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    justify-self: start;
   }
 
   .air-pet {
@@ -1452,5 +1477,9 @@ body {
   .transfer-header .btn-text svg {
     height: 16px;
     width: 16px;
+  }
+
+  .ai-toggle span {
+    display: none;
   }
 }

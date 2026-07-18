@@ -1,6 +1,8 @@
 class WebRTCManager {
   constructor(socketManager) {
     this.CHUNK_SIZE = 128 * 1024;
+    this.DESKTOP_CHUNK_SIZE = 256 * 1024;
+    this.FALLBACK_CHUNK_SIZE = 64 * 1024;
     this.BUFFER_THRESHOLD = 16 * 1024 * 1024;
     this.BUFFER_LOW_THRESHOLD = 4 * 1024 * 1024;
     this.RECEIVER_READY_TIMEOUT = 15000;
@@ -30,12 +32,14 @@ class WebRTCManager {
     this.isClosing = false;
     this.activeSendTransfer = null;
     this.resumeWaiters = new Map();
+    this.encryption = this.createEncryptionState();
 
     this.diagnosticsInterval = null;
     this.diagnosticsTransfer = null;
     this.lastDiagnosticsBytes = 0;
     this.lastDiagnosticsTimestamp = 0;
     this.lastDiagnosticsMetrics = null;
+    this.currentPerformanceProfile = null;
     this.transferDiagnostics = {
       bytesTransferred: 0,
       totalBytes: 0,
@@ -66,6 +70,18 @@ class WebRTCManager {
     };
   }
 
+  createEncryptionState() {
+    return {
+      available: typeof crypto !== 'undefined' && Boolean(crypto.subtle),
+      keyPair: null,
+      remotePublicKey: null,
+      sessionKey: null,
+      ready: null,
+      resolveReady: null,
+      rejectReady: null
+    };
+  }
+
   setIceConfig(config) {
     console.log('WebRTC: Setting ICE configuration');
     this.rtcConfig = config;
@@ -80,6 +96,15 @@ class WebRTCManager {
     this.role = role;
     this.roomCode = roomCode;
     this.isClosing = false;
+    if (!this.encryption.ready) {
+      this.encryption.ready = new Promise((resolve, reject) => {
+        this.encryption.resolveReady = resolve;
+        this.encryption.rejectReady = reject;
+      });
+    }
+    this.startEncryptionSession().catch((err) => {
+      console.warn('Application encryption unavailable. WebRTC transport encryption remains active:', err.message);
+    });
     console.log(`Initializing WebRTC as ${role} in room ${roomCode}`);
 
     this.createPeerConnection();
@@ -179,6 +204,93 @@ class WebRTCManager {
     };
   }
 
+  async startEncryptionSession() {
+    if (!this.encryption.available || this.encryption.keyPair) return;
+
+    this.encryption.keyPair = await crypto.subtle.generateKey(
+      { name: 'ECDH', namedCurve: 'P-256' },
+      false,
+      ['deriveKey']
+    );
+
+    const publicKey = await crypto.subtle.exportKey('jwk', this.encryption.keyPair.publicKey);
+    this.socketManager.sendSignal(this.roomCode, {
+      type: 'crypto-key',
+      publicKey
+    });
+
+    await this.deriveSessionKey();
+  }
+
+  async acceptRemoteCryptoKey(publicKeyJwk) {
+    if (!this.encryption.available || !publicKeyJwk || typeof publicKeyJwk !== 'object') return;
+
+    this.encryption.remotePublicKey = await crypto.subtle.importKey(
+      'jwk',
+      publicKeyJwk,
+      { name: 'ECDH', namedCurve: 'P-256' },
+      false,
+      []
+    );
+
+    await this.startEncryptionSession();
+    await this.deriveSessionKey();
+  }
+
+  async deriveSessionKey() {
+    if (this.encryption.sessionKey || !this.encryption.keyPair || !this.encryption.remotePublicKey) return;
+
+    this.encryption.sessionKey = await crypto.subtle.deriveKey(
+      {
+        name: 'ECDH',
+        public: this.encryption.remotePublicKey
+      },
+      this.encryption.keyPair.privateKey,
+      { name: 'AES-GCM', length: 256 },
+      false,
+      ['encrypt', 'decrypt']
+    );
+
+    this.encryption.resolveReady?.(this.encryption.sessionKey);
+    console.info('[AirDows] Application encryption ready: AES-GCM-256');
+  }
+
+  async waitForEncryption() {
+    if (!this.encryption.available) return null;
+    if (this.encryption.sessionKey) return this.encryption.sessionKey;
+
+    const timeout = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('No se pudo negociar la clave de cifrado.')), 10000);
+    });
+
+    return Promise.race([this.encryption.ready, timeout]);
+  }
+
+  async encryptChunk(data) {
+    const key = await this.waitForEncryption();
+    if (!key) return data;
+
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, data);
+    const envelope = new Uint8Array(iv.byteLength + encrypted.byteLength);
+    envelope.set(iv, 0);
+    envelope.set(new Uint8Array(encrypted), iv.byteLength);
+    return envelope.buffer;
+  }
+
+  async decryptChunk(data) {
+    const key = await this.waitForEncryption();
+    if (!key) return data;
+
+    const envelope = new Uint8Array(data);
+    if (envelope.byteLength <= 28) {
+      throw new Error('Chunk cifrado inválido.');
+    }
+
+    const iv = envelope.slice(0, 12);
+    return crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, envelope.slice(12));
+  }
+
   async handleSignal(data) {
     if (!this.peerConnection) {
       console.warn('WebRTC signal received before peer connection was ready. Queueing it.');
@@ -187,7 +299,9 @@ class WebRTCManager {
     }
 
     try {
-      if (data.type === 'offer') {
+      if (data.type === 'crypto-key') {
+        await this.acceptRemoteCryptoKey(data.publicKey);
+      } else if (data.type === 'offer') {
         console.log('Received SDP Offer, creating Answer...');
         await this.peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
         await this.flushPendingRemoteCandidates();
@@ -272,13 +386,17 @@ class WebRTCManager {
       return;
     }
 
-    if (state.receivedSize + data.byteLength > state.metadata.size) {
+    const chunkData = state.metadata.encryption === 'aes-gcm-256'
+      ? await this.decryptChunk(data)
+      : data;
+
+    if (state.receivedSize + chunkData.byteLength > state.metadata.size) {
       throw new Error('Se recibió más información de la esperada.');
     }
 
     if (state.writeMode === 'disk' && state.writable) {
       try {
-        state.writeChain = state.writeChain.then(() => state.writable.write(data));
+        state.writeChain = state.writeChain.then(() => state.writable.write(chunkData));
         await state.writeChain;
       } catch (err) {
         state.writeFailed = true;
@@ -287,7 +405,7 @@ class WebRTCManager {
         throw new Error(`No se pudo escribir el archivo en disco: ${err.message}`);
       }
     } else {
-      state.receivedBuffers.push(data);
+      state.receivedBuffers.push(chunkData);
       state.memoryChunkCount += 1;
 
       // Yield periodically so rendering and garbage collection can run between chunks.
@@ -296,7 +414,7 @@ class WebRTCManager {
       }
     }
 
-    state.receivedSize += data.byteLength;
+    state.receivedSize += chunkData.byteLength;
     this.reportTransferProgress(state.receivedSize, state.metadata.size, state.metadata.name, false);
 
     if (state.receivedSize >= state.metadata.size) {
@@ -436,7 +554,8 @@ class WebRTCManager {
     if (this.onFileTransferStart) {
       this.onFileTransferStart(metadata.name, metadata.size, false, {
         writeMode: nextState.writeMode,
-        supportsDiskWrite: this.supportsDiskWriteMode()
+        supportsDiskWrite: this.supportsDiskWriteMode(),
+        performanceProfile: metadata.performanceProfile || 'Modo inteligente'
       });
     }
 
@@ -566,7 +685,8 @@ class WebRTCManager {
       Number.isSafeInteger(message.size) &&
       message.size >= 0 &&
       typeof message.mime === 'string' &&
-      message.mime.trim().length > 0
+      message.mime.trim().length > 0 &&
+      (message.encryption === null || message.encryption === undefined || message.encryption === 'aes-gcm-256')
     );
   }
 
@@ -577,17 +697,27 @@ class WebRTCManager {
     }
   }
 
-  async sendFile(file) {
+  async sendFile(file, options = {}) {
     if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
       throw new Error('Data connection is not ready or open yet!');
     }
 
-    const CHUNK_SIZE = this.CHUNK_SIZE;
-    const BUFFER_THRESHOLD = this.BUFFER_THRESHOLD;
+    const performanceProfile = await this.selectPerformanceProfile();
+    const CHUNK_SIZE = performanceProfile.chunkSize;
+    const BUFFER_THRESHOLD = performanceProfile.bufferThreshold;
+    this.dataChannel.bufferedAmountLowThreshold = performanceProfile.lowThreshold;
+
+    console.info('[AirDows] Performance profile:', {
+      mode: performanceProfile.label,
+      route: performanceProfile.connectionType,
+      chunkKB: CHUNK_SIZE / 1024,
+      bufferMB: BUFFER_THRESHOLD / (1024 * 1024)
+    });
+    const sessionKey = await this.waitForEncryption();
 
     const transfer = {
       fileName: file.name,
-      transferId: crypto.randomUUID(),
+      transferId: options.transferId || this.createTransferId(),
       reader: null,
       cancelled: false,
       abortController: new AbortController(),
@@ -598,7 +728,8 @@ class WebRTCManager {
 
     if (this.onFileTransferStart) {
       this.onFileTransferStart(file.name, file.size, true, {
-        writeMode: 'send'
+        writeMode: 'send',
+        performanceProfile: performanceProfile.label
       });
     }
 
@@ -607,7 +738,9 @@ class WebRTCManager {
       name: file.name,
       size: file.size,
       mime: file.type || 'application/octet-stream',
-      transferId: transfer.transferId
+      transferId: transfer.transferId,
+      encryption: sessionKey ? 'aes-gcm-256' : null,
+      performanceProfile: performanceProfile.label
     };
     this.dataChannel.send(JSON.stringify(metadata));
 
@@ -663,7 +796,8 @@ class WebRTCManager {
             throw new Error('Data connection closed during transfer.');
           }
 
-          this.dataChannel.send(chunk);
+          const outgoingChunk = sessionKey ? await this.encryptChunk(chunk) : chunk;
+          this.dataChannel.send(outgoingChunk);
           chunkOffset += sliceSize;
           offset += sliceSize;
           transfer.bytesTransferred = offset;
@@ -700,6 +834,14 @@ class WebRTCManager {
     }
   }
 
+  createTransferId() {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID();
+    }
+
+    return `transfer-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  }
+
   waitForReceiverReady(transfer) {
     return new Promise((resolve) => {
       const timeout = setTimeout(() => {
@@ -712,6 +854,72 @@ class WebRTCManager {
         resolve(offset);
       });
     });
+  }
+
+  isMobileDevice() {
+    return typeof navigator !== 'undefined' && (
+      navigator.userAgentData?.mobile === true ||
+      /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
+    );
+  }
+
+  async selectPerformanceProfile() {
+    const mobile = this.isMobileDevice();
+    const connection = await this.getActiveCandidatePairDetails().catch(() => ({ connectionType: 'unknown' }));
+    const networkInfo = typeof navigator !== 'undefined' ? navigator.connection : null;
+    const saveData = Boolean(networkInfo && networkInfo.saveData);
+    const slowNetwork = networkInfo && /(^|-)2g$/.test(networkInfo.effectiveType || '');
+    const lowMemory = typeof navigator !== 'undefined' && Number(navigator.deviceMemory) > 0 && navigator.deviceMemory <= 4;
+
+    let chunkSize = mobile ? this.CHUNK_SIZE : this.DESKTOP_CHUNK_SIZE;
+    let bufferThreshold = 16 * 1024 * 1024;
+    let lowThreshold = 4 * 1024 * 1024;
+    let label = 'Directa veloz';
+
+    if (connection.connectionType === 'relay') {
+      chunkSize = this.FALLBACK_CHUNK_SIZE;
+      bufferThreshold = 4 * 1024 * 1024;
+      lowThreshold = 1 * 1024 * 1024;
+      label = 'Relay estable';
+    } else if (connection.connectionType === 'srflx') {
+      chunkSize = mobile ? this.FALLBACK_CHUNK_SIZE : this.CHUNK_SIZE;
+      bufferThreshold = 8 * 1024 * 1024;
+      lowThreshold = 2 * 1024 * 1024;
+      label = 'Directa adaptable';
+    } else if (connection.connectionType === 'unknown') {
+      chunkSize = this.CHUNK_SIZE;
+      bufferThreshold = 8 * 1024 * 1024;
+      lowThreshold = 2 * 1024 * 1024;
+      label = 'Compatibilidad segura';
+    }
+
+    if (saveData || slowNetwork || lowMemory) {
+      chunkSize = Math.min(chunkSize, this.FALLBACK_CHUNK_SIZE);
+      bufferThreshold = Math.min(bufferThreshold, 4 * 1024 * 1024);
+      lowThreshold = Math.min(lowThreshold, 1 * 1024 * 1024);
+      label = 'Ahorro de red';
+    }
+
+    const maxMessageSize = this.peerConnection?.sctp?.maxMessageSize;
+    if (Number.isFinite(maxMessageSize) && maxMessageSize > 0) {
+      const safeSctpLimit = Math.max(16 * 1024, Math.floor(maxMessageSize * 0.75));
+      chunkSize = Math.min(chunkSize, safeSctpLimit);
+    }
+
+    const profile = {
+      connectionType: connection.connectionType,
+      chunkSize,
+      bufferThreshold,
+      lowThreshold,
+      label
+    };
+
+    this.currentPerformanceProfile = profile;
+    return profile;
+  }
+
+  async getAdaptiveChunkSize() {
+    return (await this.selectPerformanceProfile()).chunkSize;
   }
 
   reportTransferProgress(bytesTransferred, totalBytes, fileName, isSending) {
@@ -1013,6 +1221,7 @@ class WebRTCManager {
     this.pendingSignals = [];
     this.pendingRemoteCandidates = [];
     this.resumeWaiters.clear();
+    this.encryption = this.createEncryptionState();
     this.receiverState = this.createEmptyReceiverState();
   }
 

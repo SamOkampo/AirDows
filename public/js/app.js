@@ -2,6 +2,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // 1. Initialize Managers
   const socketManager = new SocketManager();
   const webrtcManager = new WebRTCManager(socketManager);
+  const localAiManager = typeof LocalAIManager === 'function' ? new LocalAIManager() : null;
 
   // 2. DOM Elements
   const setupView = document.getElementById('setup-view');
@@ -22,6 +23,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const connectionStatusText = document.getElementById('connection-status-text');
   const btnDisconnect = document.getElementById('btn-disconnect');
   const airPet = document.getElementById('air-pet');
+  const localAiToggle = document.getElementById('local-ai-toggle');
   const dropZone = document.getElementById('drop-zone');
   const fileInput = document.getElementById('file-input');
   const clipboardTextInput = document.getElementById('clipboard-text-input');
@@ -77,6 +79,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let transferIsActive = false;
   let wakeLock = null;
   let sharedFilesPending = [];
+  let p2pConnected = false;
 
   // --- HELPERS ---
   function translate(key) {
@@ -127,7 +130,10 @@ document.addEventListener('DOMContentLoaded', () => {
         ? 'pro_mode_memory'
         : 'pro_mode_send';
 
-    diagnosticMode.textContent = translate(modeKey);
+    const baseLabel = translate(modeKey);
+    diagnosticMode.textContent = options.performanceProfile
+      ? `${baseLabel} · ${options.performanceProfile}`
+      : baseLabel;
   }
 
   async function acquireTransferWakeLock() {
@@ -211,7 +217,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const meta = document.createElement('div');
       meta.className = 'queue-file-meta';
-      meta.textContent = formatBytes(item.file.size);
+      meta.textContent = item.insight
+        ? `${formatBytes(item.file.size)} · ${item.insight.label}`
+        : formatBytes(item.file.size);
 
       info.appendChild(name);
       info.appendChild(meta);
@@ -246,7 +254,11 @@ document.addEventListener('DOMContentLoaded', () => {
       transferQueue.push({
         id: ++queueIdCounter,
         file,
-        status: 'pending'
+        transferId: typeof crypto !== 'undefined' && crypto.randomUUID
+          ? crypto.randomUUID()
+          : `queue-${Date.now()}-${queueIdCounter}`,
+        status: 'pending',
+        insight: localAiManager ? localAiManager.analyzeFile(file) : null
       });
     });
 
@@ -271,11 +283,12 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   async function processQueue() {
-    if (isProcessingQueue) return;
+    if (isProcessingQueue || !p2pConnected) return;
 
     isProcessingQueue = true;
 
     while (true) {
+      if (!p2pConnected) break;
       const nextItem = transferQueue.find(item => item.status === 'pending');
       if (!nextItem) break;
 
@@ -285,13 +298,20 @@ document.addEventListener('DOMContentLoaded', () => {
       renderQueue();
 
       try {
-        await webrtcManager.sendFile(nextItem.file);
+        await webrtcManager.sendFile(nextItem.file, {
+          transferId: nextItem.transferId
+        });
         if (nextItem.status !== 'cancelled') {
           nextItem.status = 'done';
         }
       } catch (err) {
         if (err.name === 'TransferCancelledError' || nextItem.status === 'cancelled') {
           nextItem.status = 'cancelled';
+        } else if (/connection (is not ready|closed)|data connection/i.test(err.message)) {
+          nextItem.status = 'pending';
+          p2pConnected = false;
+          showToast('Conexión interrumpida. Se reanudará al reconectar.');
+          break;
         } else {
           nextItem.status = 'error';
           showToast(`${translate('transfer_fail')}${err.message}`);
@@ -432,6 +452,7 @@ document.addEventListener('DOMContentLoaded', () => {
     console.log(`Paired as ${role} in room ${code}`);
     setPetState('connecting');
     roomCode = code;
+    p2pConnected = false;
 
     
     switchView('transfer');
@@ -480,6 +501,7 @@ document.addEventListener('DOMContentLoaded', () => {
   webrtcManager.onConnectionStateChange = (state) => {
     console.log('WebRTC Connection state changed to:', state);
     if (state === 'connected') {
+      p2pConnected = true;
       setPetState('idle');
       reconnectAttempts = 0;
       if (reconnectTimer) {
@@ -487,10 +509,13 @@ document.addEventListener('DOMContentLoaded', () => {
         reconnectTimer = null;
       }
       connectionStatusText.textContent = translate('p2p_active');
+      processQueue();
     } else if ((state === 'failed' || state === 'disconnected') && roomCode) {
+      p2pConnected = false;
       setPetState('error');
       scheduleReconnect();
     } else if (state === 'closed') {
+      p2pConnected = false;
       setPetState('error');
       if (roomCode) {
         scheduleReconnect();
@@ -753,6 +778,7 @@ document.addEventListener('DOMContentLoaded', () => {
       reconnectTimer = null;
     }
     reconnectAttempts = 0;
+    p2pConnected = false;
     transferIsActive = false;
     releaseTransferWakeLock();
     if (activeQueueItem) {
@@ -802,6 +828,17 @@ document.addEventListener('DOMContentLoaded', () => {
       acquireTransferWakeLock();
     }
   });
+
+  if (localAiManager && localAiToggle) {
+    localAiToggle.checked = localAiManager.enabled;
+    localAiToggle.addEventListener('change', () => {
+      localAiManager.setEnabled(localAiToggle.checked);
+      transferQueue.forEach((item) => {
+        item.insight = localAiManager.analyzeFile(item.file);
+      });
+      renderQueue();
+    });
+  }
 
   // --- CHECK URL QUERY PARAMS FOR QR AUTO-JOIN ---
   const urlParams = new URLSearchParams(window.location.search);

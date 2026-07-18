@@ -4,6 +4,7 @@ const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 
 if (typeof process.loadEnvFile === 'function') {
   const localEnvPath = path.join(__dirname, '.env');
@@ -25,6 +26,8 @@ const io = new Server(server, {
 
 const PORT = process.env.PORT || 3000;
 const ROOM_EXPIRATION_MS = 180000;
+const JOIN_ATTEMPT_WINDOW_MS = 60 * 1000;
+const MAX_JOIN_ATTEMPTS = 5;
 const ICE_CONFIG_CACHE_MS = 10 * 60 * 1000;
 
 let cachedIceConfig = null;
@@ -142,7 +145,7 @@ const activeRooms = new Map();
 function generateUniqueCode() {
   let code;
   do {
-    code = Math.floor(1000 + Math.random() * 9000).toString();
+    code = crypto.randomInt(1000, 10000).toString();
   } while (activeRooms.has(code));
   return code;
 }
@@ -188,15 +191,37 @@ io.on('connection', (socket) => {
 
   // 2. Join an existing pairing code
   socket.on('join-code', (payload = {}) => {
+    const now = Date.now();
+    const attempts = socket.data.joinAttempts || { count: 0, startedAt: now };
+    if (now - attempts.startedAt > JOIN_ATTEMPT_WINDOW_MS) {
+      attempts.count = 0;
+      attempts.startedAt = now;
+    }
+
+    const rejectJoin = (message) => {
+      attempts.count += 1;
+      socket.data.joinAttempts = attempts;
+      socket.emit('error-message', {
+        message: attempts.count >= MAX_JOIN_ATTEMPTS
+          ? 'Too many pairing attempts. Please wait a minute.'
+          : message
+      });
+    };
+
+    if (attempts.count >= MAX_JOIN_ATTEMPTS) {
+      socket.emit('error-message', { message: 'Too many pairing attempts. Please wait a minute.' });
+      return;
+    }
+
     const cleanCode = String(payload.code || '').trim();
     
     if (!/^\d{4}$/.test(cleanCode)) {
-      socket.emit('error-message', { message: 'Invalid code. Enter a 4-digit code.' });
+      rejectJoin('Invalid code. Enter a 4-digit code.');
       return;
     }
     
     if (!activeRooms.has(cleanCode)) {
-      socket.emit('error-message', { message: 'Invalid code. Code does not exist.' });
+      rejectJoin('Invalid code. Code does not exist.');
       return;
     }
 
@@ -204,18 +229,19 @@ io.on('connection', (socket) => {
     const occupants = room.occupants;
 
     if (occupants.has(socket.id)) {
-      socket.emit('error-message', { message: 'You are already in this room.' });
+      rejectJoin('You are already in this room.');
       return;
     }
 
     if (occupants.size >= 2) {
-      socket.emit('error-message', { message: 'This room is full. Max 2 devices allowed.' });
+      rejectJoin('This room is full. Max 2 devices allowed.');
       return;
     }
 
     leaveAllRooms(socket);
 
     occupants.add(socket.id);
+    socket.data.joinAttempts = { count: 0, startedAt: now };
     socket.join(cleanCode);
     clearTimeout(room.timeout);
     console.log(`Socket ${socket.id} joined room ${cleanCode}`);

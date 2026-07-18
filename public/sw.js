@@ -1,5 +1,5 @@
 const CACHE_NAME = 'airdows-shell-v1';
-const APP_SHELL = ['/app', '/style.css', '/js/app.js', '/js/socket-manager.js', '/js/webrtc-manager.js', '/js/qrcode-generator.js', '/js/qr-manager.js'];
+const APP_SHELL = ['/app', '/style.css', '/js/app.js', '/js/socket-manager.js', '/js/webrtc-manager.js', '/js/qrcode-generator.js', '/js/qr-manager.js', '/js/local-ai-manager.js'];
 const SHARE_DB_NAME = 'airdows-share';
 const SHARE_STORE_NAME = 'pending';
 
