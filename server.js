@@ -135,20 +135,14 @@ async function getIceConfig() {
   return cachedIceConfig;
 }
 
-app.use(apiLimiter);
-
-// Serve static files from the public folder
-app.use(express.static(path.join(__dirname, 'public')));
-
 // Store active rooms and their occupants
-// Room structure: code -> { occupants: Set<socket.id>, timeout: Timeout }
 const activeRooms = new Map();
 
 // Helper to generate a unique 4-digit code
 function generateUniqueCode() {
   let code;
   do {
-    code = Math.floor(1000 + Math.random() * 9000).toString(); // "1000" to "9999"
+    code = Math.floor(1000 + Math.random() * 9000).toString();
   } while (activeRooms.has(code));
   return code;
 }
@@ -169,13 +163,11 @@ io.on('connection', (socket) => {
 
   // 1. Generate a new pairing code
   socket.on('generate-code', () => {
-    // Clean up if this socket was already in another room
     leaveAllRooms(socket);
 
     const code = generateUniqueCode();
     const timeout = setTimeout(() => {
       const room = activeRooms.get(code);
-
       if (!room || room.occupants.size >= 2) return;
 
       activeRooms.delete(code);
@@ -196,7 +188,6 @@ io.on('connection', (socket) => {
 
   // 2. Join an existing pairing code
   socket.on('join-code', (payload = {}) => {
-    // Standardize input
     const cleanCode = String(payload.code || '').trim();
     
     if (!/^\d{4}$/.test(cleanCode)) {
@@ -222,28 +213,22 @@ io.on('connection', (socket) => {
       return;
     }
 
-    // Clean up current socket's previous rooms before joining
     leaveAllRooms(socket);
 
-    // Join room
     occupants.add(socket.id);
     socket.join(cleanCode);
     clearTimeout(room.timeout);
     console.log(`Socket ${socket.id} joined room ${cleanCode}`);
 
-    // Notify both clients in the room that pairing is complete
-    // We'll define who is the 'initiator' (the one who generated the code) and 'receiver'
     const occupantsArray = Array.from(occupants);
     const initiatorId = occupantsArray[0];
     const joinerId = occupantsArray[1];
 
-    // Emit paired event to initiator
     io.to(initiatorId).emit('paired', { role: 'initiator', peerId: joinerId, code: cleanCode });
-    // Emit paired event to joiner
     io.to(joinerId).emit('paired', { role: 'receiver', peerId: initiatorId, code: cleanCode });
   });
 
-  // 3. Forward Signaling Messages (Offer, Answer, ICE Candidates)
+  // 3. Forward Signaling Messages
   socket.on('signal', (payload = {}) => {
     const room = String(payload.room || '').trim();
     const data = payload.data;
@@ -258,7 +243,6 @@ io.on('connection', (socket) => {
       return;
     }
 
-    // Broadcast signal data to other clients in the same room
     socket.to(room).emit('signal', { data, senderId: socket.id });
   });
 
@@ -274,21 +258,17 @@ io.on('connection', (socket) => {
   });
 });
 
-// Helper function to remove socket from all tracking and notify others
 function leaveAllRooms(socket) {
   for (const [code, room] of activeRooms.entries()) {
     const occupants = room.occupants;
 
     if (occupants.has(socket.id)) {
-      // Remove socket from the active set
       occupants.delete(socket.id);
       socket.leave(code);
       console.log(`Socket ${socket.id} left room ${code}`);
 
-      // Notify other occupants that their peer disconnected
       socket.to(code).emit('peer-disconnected');
 
-      // If room is empty, delete it
       if (occupants.size === 0) {
         clearTimeout(room.timeout);
         activeRooms.delete(code);
@@ -298,6 +278,31 @@ function leaveAllRooms(socket) {
   }
 }
 
+// ==========================================
+// CONFIGURACIÓN DE RUTAS Y ARCHIVOS ESTÁTICOS
+// ==========================================
+
+// Aplicar el limitador de peticiones primero
+app.use(apiLimiter);
+
+// REDIRECCIÓN FORZADA: Si el usuario escribe /app.html en la URL,
+// lo pateamos automáticamente a /app para limpiar el navegador.
+app.use((req, res, next) => {
+  if (req.path === '/app.html') {
+    return res.redirect(301, '/app');
+  }
+  next();
+});
+
+// 1. RUTA LIMPIA PARA LA APP: Responde en /app usando el archivo app.html
+app.get('/app', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'app.html')); 
+});
+
+// 2. ARCHIVOS ESTÁTICOS GENERALES: Para imágenes, CSS, scripts, etc.
+app.use(express.static(path.join(__dirname, 'public')));
+
+// 3. ENCENDER EL SERVIDOR (Siempre al final)
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`Signaling server running on http://localhost:${PORT}`);
   console.log(`Local network access via http://<YOUR_LOCAL_IP>:${PORT}`);
