@@ -1338,6 +1338,20 @@ body {
   animation: pet-bob 0.8s ease-in-out infinite;
 }
 
+.air-pet--transferring .air-pet-face {
+  animation: pet-bob 0.8s ease-in-out infinite;
+}
+
+.air-pet--turbo .air-pet-face {
+  animation: pet-bob 0.45s ease-in-out infinite;
+  border-color: #36d9a2;
+  box-shadow: 0 5px 18px rgba(54, 217, 162, 0.35);
+}
+
+.air-pet--turbo .air-pet-antenna::before {
+  animation: pet-blink 0.45s ease-in-out infinite;
+}
+
 .air-pet.is-transferring .air-pet-body {
   animation: pet-body-bob 0.8s ease-in-out infinite;
 }
@@ -1348,6 +1362,11 @@ body {
 }
 
 .air-pet.is-error .air-pet-face {
+  border-color: #ff7182;
+  transform: rotate(-5deg);
+}
+
+.air-pet--error .air-pet-face {
   border-color: #ff7182;
   transform: rotate(-5deg);
 }
@@ -1368,6 +1387,12 @@ body {
   .air-pet.is-connecting .air-pet-antenna::before,
   .air-pet.is-transferring .air-pet-antenna::before,
   .air-pet.is-transferring .air-pet-face {
+    animation: none;
+  }
+
+  .air-pet--transferring .air-pet-face,
+  .air-pet--turbo .air-pet-face,
+  .air-pet--turbo .air-pet-antenna::before {
     animation: none;
   }
 

@@ -73,6 +73,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let reconnectTimer = null;
   let reconnectAttempts = 0;
   const maxReconnectAttempts = 5;
+  let activeTransferMode = 'idle';
 
   // --- HELPERS ---
   function translate(key) {
@@ -107,7 +108,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function setPetState(state) {
     if (!airPet) return;
-    airPet.className = `air-pet is-${state}`;
+    const stateClasses = {
+      idle: 'air-pet--idle',
+      transferring: 'air-pet--transferring',
+      turbo: 'air-pet--turbo',
+      error: 'air-pet--error'
+    };
+    airPet.className = `air-pet ${stateClasses[state] || stateClasses.idle} is-${state}`;
   }
 
   function updateTransferModeBadge(options = {}) {
@@ -421,7 +428,7 @@ document.addEventListener('DOMContentLoaded', () => {
   webrtcManager.onConnectionStateChange = (state) => {
     console.log('WebRTC Connection state changed to:', state);
     if (state === 'connected') {
-      setPetState('connected');
+      setPetState('idle');
       reconnectAttempts = 0;
       if (reconnectTimer) {
         clearTimeout(reconnectTimer);
@@ -461,6 +468,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   webrtcManager.onFileTransferStart = (fileName, totalBytes, isSending, options = {}) => {
+    activeTransferMode = options.writeMode || 'send';
     setPetState('transferring');
     dropZone.classList.add('hidden');
     completedCard.classList.add('hidden');
@@ -506,7 +514,8 @@ document.addEventListener('DOMContentLoaded', () => {
   };
 
   webrtcManager.onFileTransferComplete = (fileBlob, fileName, options = {}) => {
-    setPetState('complete');
+    activeTransferMode = 'idle';
+    setPetState('idle');
     progressCard.classList.add('hidden');
     networkDiagnostics.classList.add('hidden');
     completedCard.classList.remove('hidden');
@@ -551,10 +560,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
   webrtcManager.onNetworkDiagnostics = (metrics) => {
     networkDiagnostics.classList.remove('hidden');
+    const isTurboMode = activeTransferMode === 'disk' || activeTransferMode === 'send';
+    setPetState(isTurboMode && metrics.speed >= 10 * 1024 * 1024 ? 'turbo' : 'transferring');
+  };
+
+  webrtcManager.onTransferError = () => {
+    activeTransferMode = 'idle';
+    setPetState('error');
   };
 
   webrtcManager.onFileTransferCancelled = (fileName, isLocal) => {
-    setPetState('connected');
+    activeTransferMode = 'idle';
+    setPetState('idle');
     progressCard.classList.add('hidden');
     networkDiagnostics.classList.add('hidden');
     completedCard.classList.add('hidden');

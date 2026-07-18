@@ -17,6 +17,7 @@ class WebRTCManager {
     this.onPeerDisconnected = null;
     this.onClipboardMessage = null; // (text)
     this.onFileTransferCancelled = null; // (fileName, isLocal)
+    this.onTransferError = null; // ({ type, message, fileName })
     this.onNetworkDiagnostics = null; // ({ connectionType, speed, qualityLabel, isLocal, percent })
 
     this.receiverState = this.createEmptyReceiverState();
@@ -34,6 +35,20 @@ class WebRTCManager {
     this.lastDiagnosticsBytes = 0;
     this.lastDiagnosticsTimestamp = 0;
     this.lastDiagnosticsMetrics = null;
+    this.transferDiagnostics = {
+      bytesTransferred: 0,
+      totalBytes: 0,
+      percent: 0,
+      speedBytesPerSecond: 0,
+      speedMBps: 0,
+      direction: null,
+      fileName: null,
+      updatedAt: null
+    };
+
+    if (typeof window !== 'undefined') {
+      window.airDowsDiagnostics = this.transferDiagnostics;
+    }
   }
 
   createEmptyReceiverState() {
@@ -266,6 +281,7 @@ class WebRTCManager {
       } catch (err) {
         state.writeFailed = true;
         await this.abortReceiverDiskStream();
+        this.reportTransferError('disk-write', err, state.metadata.name);
         throw new Error(`No se pudo escribir el archivo en disco: ${err.message}`);
       }
     } else {
@@ -365,6 +381,12 @@ class WebRTCManager {
       if (current.writeMode === 'disk' && current.writable) {
         await current.writeChain;
         await current.writable.seek(current.receivedSize);
+        console.info('[AirDows] Resume seek', {
+          fileName: metadata.name,
+          offset: current.receivedSize,
+          totalBytes: metadata.size,
+          percent: this.calculatePercent(current.receivedSize, metadata.size)
+        });
       }
       return;
     }
@@ -514,6 +536,7 @@ class WebRTCManager {
       await state.writable.abort();
     } catch (err) {
       console.error('Error aborting receiver disk stream:', err);
+      this.reportTransferError('disk-abort', err, state.metadata && state.metadata.name);
     } finally {
       state.writable = null;
       state.fileHandle = null;
@@ -827,10 +850,46 @@ class WebRTCManager {
       fileName: this.diagnosticsTransfer.fileName
     };
 
+    this.transferDiagnostics.bytesTransferred = bytesTransferred;
+    this.transferDiagnostics.totalBytes = this.diagnosticsTransfer.totalBytes;
+    this.transferDiagnostics.percent = percent;
+    this.transferDiagnostics.speedBytesPerSecond = speed;
+    this.transferDiagnostics.speedMBps = speed / (1024 * 1024);
+    this.transferDiagnostics.direction = this.diagnosticsTransfer.direction;
+    this.transferDiagnostics.fileName = this.diagnosticsTransfer.fileName;
+    this.transferDiagnostics.updatedAt = new Date().toISOString();
+
+    console.info('[AirDows] Transfer metrics', {
+      fileName: this.transferDiagnostics.fileName,
+      direction: this.transferDiagnostics.direction,
+      speedMBps: Number(this.transferDiagnostics.speedMBps.toFixed(2)),
+      percent: Number(this.transferDiagnostics.percent.toFixed(2)),
+      bytes: `${bytesTransferred}/${this.transferDiagnostics.totalBytes}`
+    });
+
     this.lastDiagnosticsBytes = bytesTransferred;
     this.lastDiagnosticsTimestamp = now;
     this.lastDiagnosticsMetrics = metrics;
     this.onNetworkDiagnostics(metrics);
+  }
+
+  calculatePercent(bytesTransferred, totalBytes) {
+    return totalBytes > 0
+      ? Math.min(100, (bytesTransferred / totalBytes) * 100)
+      : 0;
+  }
+
+  reportTransferError(type, error, fileName = null) {
+    const payload = {
+      type,
+      message: error && error.message ? error.message : String(error),
+      fileName
+    };
+
+    console.error('[AirDows] Transfer error', payload);
+    if (this.onTransferError) {
+      this.onTransferError(payload);
+    }
   }
 
   async getActiveCandidatePairDetails() {
