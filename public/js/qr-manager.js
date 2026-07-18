@@ -11,12 +11,14 @@ const QRManager = {
     const canvas = document.createElement('canvas');
     const context = canvas.getContext('2d', { alpha: false });
     const moduleCount = qr.getModuleCount();
-    const quietZone = 4;
+    const quietZone = 3;
     const cellSize = Math.max(1, Math.floor(size / (moduleCount + quietZone * 2)));
     const pixelSize = cellSize * (moduleCount + quietZone * 2);
 
     canvas.width = pixelSize;
     canvas.height = pixelSize;
+    canvas.style.display = 'block';
+    canvas.style.margin = '0 auto';
     canvas.style.width = `${size}px`;
     canvas.style.height = `${size}px`;
     canvas.setAttribute('aria-label', 'QR de conexión AirDows');

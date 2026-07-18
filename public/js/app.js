@@ -424,7 +424,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (typeof QRManager === 'undefined') {
       showToast(translate('qr_library_fail'));
     } else {
-      qrCodeInstance = QRManager.draw(qrcodeDiv, joinUrl, 180);
+      qrCodeInstance = QRManager.draw(qrcodeDiv, joinUrl, 150);
     }
   };
 

@@ -1,8 +1,8 @@
 class WebRTCManager {
   constructor(socketManager) {
-    this.CHUNK_SIZE = 65536;
+    this.CHUNK_SIZE = 128 * 1024;
     this.BUFFER_THRESHOLD = 16 * 1024 * 1024;
-    this.BUFFER_LOW_THRESHOLD = 8 * 1024 * 1024;
+    this.BUFFER_LOW_THRESHOLD = 4 * 1024 * 1024;
     this.RECEIVER_READY_TIMEOUT = 15000;
     this.socketManager = socketManager;
     this.peerConnection = null;
@@ -291,7 +291,7 @@ class WebRTCManager {
       state.memoryChunkCount += 1;
 
       // Yield periodically so rendering and garbage collection can run between chunks.
-      if (state.memoryChunkCount % 32 === 0) {
+      if (state.memoryChunkCount % 256 === 0) {
         await new Promise((resolve) => setTimeout(resolve, 0));
       }
     }
