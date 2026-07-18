@@ -691,13 +691,16 @@ app.post('/admin/alerts/test', requireAdminDashboard, async (req, res) => {
   return res.json(result);
 });
 
-const publicTrustPages = {
+const publicPages = {
   '/como-funciona': 'como-funciona.html',
   '/privacidad': 'privacidad.html',
-  '/seguridad': 'seguridad.html'
+  '/seguridad': 'seguridad.html',
+  '/pasar-archivos-iphone-a-pc': 'pasar-archivos-iphone-a-pc.html',
+  '/pasar-archivos-android-a-pc': 'pasar-archivos-android-a-pc.html',
+  '/enviar-videos-sin-perder-calidad': 'enviar-videos-sin-perder-calidad.html'
 };
 
-Object.entries(publicTrustPages).forEach(([route, fileName]) => {
+Object.entries(publicPages).forEach(([route, fileName]) => {
   app.get(route, (req, res) => {
     res.sendFile(path.join(__dirname, 'public', fileName));
   });
@@ -712,9 +715,9 @@ app.use((req, res, next) => {
   if (req.path === '/app.html') {
     return res.redirect(301, `/app${req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : ''}`);
   }
-  const cleanTrustRoute = Object.entries(publicTrustPages)
+  const cleanPublicRoute = Object.entries(publicPages)
     .find(([, fileName]) => req.path === `/${fileName}`)?.[0];
-  if (cleanTrustRoute) return res.redirect(301, cleanTrustRoute);
+  if (cleanPublicRoute) return res.redirect(301, cleanPublicRoute);
   next();
 });
 

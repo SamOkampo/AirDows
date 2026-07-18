@@ -644,6 +644,11 @@ h1 {
   font-size: 0.82rem;
 }
 
+.site-footer .footer-links {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 @media (max-width: 900px) {
   .header-inner {
     grid-template-columns: 1fr auto;
@@ -825,6 +830,7 @@ h1 {
 
   .footer-links {
     flex-wrap: wrap;
+    justify-content: flex-start;
     gap: 12px 18px;
   }
 }
