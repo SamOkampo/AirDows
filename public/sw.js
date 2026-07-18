@@ -1,7 +1,8 @@
-const CACHE_NAME = 'airdows-shell-v6';
+const CACHE_NAME = 'airdows-shell-v7';
 const APP_SHELL = [
   '/',
   '/app',
+  '/landing.css',
   '/style.css',
   '/manifest.webmanifest',
   '/assets/icon-192.png',

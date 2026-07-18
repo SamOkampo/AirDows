@@ -9,13 +9,20 @@
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="AirDows">
   <meta property="og:title" content="Pasa archivos del celular al PC sin cables | AirDows" data-i18n-meta="og_title">
-  <meta property="og:description" content="Escanea un QR y transfiere archivos en su calidad original. Sin cuenta y sin instalar para empezar." data-i18n-meta="og_description">
+  <meta property="og:description" content="Escanea un QR y mueve archivos sin usar chats como puente. Sin cuenta y sin instalar para empezar." data-i18n-meta="og_description">
   <meta property="og:url" content="https://airdows.com/">
-  <meta name="twitter:card" content="summary">
+  <meta property="og:image" content="https://airdows.com/assets/og-airdows.jpg">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="AirDows: pasa archivos del celular al PC sin cables">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Pasa archivos del celular al PC sin cables | AirDows">
+  <meta name="twitter:description" content="Escanea un QR y mueve archivos sin usar chats como puente.">
+  <meta name="twitter:image" content="https://airdows.com/assets/og-airdows.jpg">
   <title data-i18n="title">Pasar archivos del celular al PC sin cable | AirDows</title>
   <link rel="icon" type="image/png" href="/assets/favicon.png">
   <link rel="manifest" href="/manifest.webmanifest">
-  <meta name="theme-color" content="#0b1020">
+  <meta name="theme-color" content="#060713">
   <meta name="application-name" content="AirDows">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -24,156 +31,76 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <style>
-    .air-logo-mark { background: linear-gradient(145deg, #00e5f5 10%, #168bff 42%, #8a3ffc 72%, #ef2bff); -webkit-background-clip: text; background-clip: text; color: transparent; font-size: 2rem; font-weight: 800; line-height: 1; }
-    .landing-drop-zone { border: 1px dashed rgba(0, 229, 245, .42); background: rgba(16, 19, 29, .7); transition: border-color .2s, background .2s, transform .2s; }
-    .landing-drop-zone.is-over { border-color: #00e5f5; background: rgba(0, 229, 245, .1); transform: translateY(-2px); }
-    .landing-pet { align-items: center; background: #168bff; border: 2px solid #00e5f5; border-radius: 14px; display: inline-flex; height: 42px; justify-content: center; position: relative; width: 50px; }
-    .landing-pet::before { background: #7de8ff; border-radius: 50%; box-shadow: 12px 0 #7de8ff; content: ''; height: 5px; left: 15px; position: absolute; top: 14px; width: 5px; }
-    .landing-pet::after { border-bottom: 2px solid #7de8ff; border-radius: 0 0 8px 8px; bottom: 8px; content: ''; height: 4px; position: absolute; width: 10px; }
-    .landing-pet.air-pet--transferring, .landing-pet.air-pet--turbo { animation: landing-pet-bob .65s ease-in-out infinite; }
-    .landing-pet.air-pet--turbo { border-color: #25e6a4; box-shadow: 0 0 25px rgba(37, 230, 164, .3); }
-    .landing-pet.air-pet--error { border-color: #ff7182; transform: rotate(-5deg); }
-    @keyframes landing-pet-bob { 50% { transform: translateY(-4px); } }
-    @media (prefers-reduced-motion: reduce) { .landing-pet { animation: none !important; } }
-  </style>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = {
-      theme: {
-        extend: {
-          fontFamily: {
-            sans: ['Plus Jakarta Sans', 'ui-sans-serif', 'system-ui']
-          },
-          boxShadow: {
-            glow: '0 0 48px rgba(59, 130, 246, 0.35)',
-            purpleGlow: '0 0 60px rgba(168, 85, 247, 0.28)'
-          }
-        }
-      }
-    };
-  </script>
+  <link rel="stylesheet" href="/landing.css">
   <script defer src="https://cloud.umami.is/script.js" data-website-id="09412ec8-2ab9-41f4-a833-21fdcf60bf41"></script>
 </head>
-<body class="min-h-screen overflow-x-hidden bg-[#060713] font-sans text-white antialiased">
-  <div class="pointer-events-none fixed inset-0 -z-10">
-    <div class="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.035)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.035)_1px,transparent_1px)] bg-[size:72px_72px]"></div>
-  </div>
+<body>
+  <div class="page-grid" aria-hidden="true"></div>
 
-  <header class="mx-auto flex w-full max-w-7xl items-center justify-between px-5 py-5 sm:px-8 lg:px-10">
-    <a href="/" class="group flex items-center gap-3" aria-label="AirDows home" data-i18n-aria="header_logo_aria">
-      <span class="flex h-10 w-10 items-center justify-center rounded-2xl border border-white/15 bg-white/10 shadow-glow backdrop-blur-xl transition group-hover:border-blue-300/50">
-        <span class="air-logo-mark" aria-hidden="true">A</span>
-      </span>
-      <span class="text-lg font-extrabold tracking-tight sm:text-xl">AirDows</span>
-    </a>
+  <header class="site-header">
+    <div class="shell header-inner">
+      <a class="brand" href="/" aria-label="AirDows inicio" data-i18n-aria="header_logo_aria">
+        <img src="/assets/favicon.png" alt="" width="34" height="34">
+        <span>AirDows</span>
+      </a>
 
-    <nav class="hidden items-center gap-6 text-sm font-semibold text-slate-300 md:flex" aria-label="Información de confianza">
-      <a href="/como-funciona" class="transition hover:text-white" data-i18n="nav_how">Cómo funciona</a>
-      <a href="/privacidad" class="transition hover:text-white" data-i18n="nav_privacy">Privacidad</a>
-      <a href="/seguridad" class="transition hover:text-white" data-i18n="nav_security">Seguridad</a>
-    </nav>
+      <nav class="main-nav" aria-label="Información de confianza">
+        <a href="#como-usarlo" data-i18n="nav_how">Cómo funciona</a>
+        <a href="/privacidad" data-i18n="nav_privacy">Privacidad</a>
+        <a href="/seguridad" data-i18n="nav_security">Seguridad</a>
+      </nav>
 
-    <a href="/app" data-umami-event="landing_header_cta" class="rounded-lg border border-white/15 bg-white/10 px-5 py-2.5 text-sm font-bold text-white backdrop-blur-xl transition hover:border-cyan-300/50 hover:bg-white/15" data-i18n="open_app">
-      Abrir AirDows
-    </a>
+      <a class="button button-secondary header-action" href="/app" data-umami-event="landing_header_cta" data-i18n="open_app">Abrir AirDows</a>
+    </div>
   </header>
 
   <main>
-    <section class="mx-auto flex w-full max-w-7xl flex-col items-center gap-10 px-5 pb-16 pt-10 sm:px-8 lg:px-10 lg:pt-14">
-      <div class="mx-auto max-w-5xl text-center">
-        <div class="mb-7 inline-flex items-center gap-2 rounded-full border border-blue-300/20 bg-blue-400/10 px-4 py-2 text-sm font-semibold text-blue-100 shadow-glow backdrop-blur-xl">
-          <span class="h-2 w-2 rounded-full bg-emerald-300 shadow-[0_0_18px_rgba(110,231,183,0.9)]"></span>
-          <span data-i18n="hero_badge">iPhone, Android y Windows · Sin instalar</span>
-        </div>
+    <section class="hero">
+      <div class="shell">
+        <div class="hero-copy">
+          <span class="eyebrow" data-i18n="hero_badge">Beta pública · gratis por ahora</span>
+          <h1 data-i18n="hero_title">Pasa archivos del celular al PC sin cables.</h1>
+          <p class="hero-description" data-i18n="hero_desc">Escanea un QR y mueve fotos, videos o documentos sin usar chats como puente. El archivo llega tal como lo seleccionaste.</p>
 
-        <h1 class="text-balance text-5xl font-extrabold leading-tight tracking-tight text-white sm:text-6xl lg:text-7xl" data-i18n="hero_title">
-          Pasa archivos del celular al PC sin cables.
-        </h1>
-
-        <p class="mx-auto mt-7 max-w-2xl text-pretty text-lg leading-8 text-slate-300 sm:text-xl lg:mx-0" data-i18n="hero_desc">
-          Escanea un QR y transfiere fotos, videos y documentos en su calidad original. Sin mandártelos por WhatsApp ni subirlos para descargarlos otra vez.
-        </p>
-
-        <div class="mt-9 flex flex-col items-center gap-4">
-          <a href="/app" data-umami-event="landing_primary_cta" class="inline-flex w-full items-center justify-center rounded-lg bg-blue-500 px-8 py-4 text-base font-extrabold text-white shadow-glow transition hover:bg-cyan-500 sm:w-auto">
-            <span data-i18n="hero_btn">Transferir ahora</span>
-          </a>
-          <div class="flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-sm font-semibold text-slate-400">
-            <span data-i18n="trust_account">Sin cuenta</span>
-            <span aria-hidden="true">·</span>
-            <span data-i18n="trust_install">Sin instalar para empezar</span>
-            <span aria-hidden="true">·</span>
-            <span data-i18n="trust_beta">Beta gratuita</span>
+          <div class="hero-actions">
+            <a class="button" href="/app" data-umami-event="landing_primary_cta" data-i18n="hero_btn">Transferir ahora</a>
+            <a class="button button-secondary" href="#como-usarlo" data-umami-event="landing_how_cta" data-i18n="see_how">Ver cómo funciona</a>
           </div>
+
+          <ul class="proof-list" aria-label="Ventajas principales">
+            <li data-i18n="trust_account">Sin cuenta</li>
+            <li data-i18n="trust_quality">No comprime tus archivos</li>
+            <li data-i18n="trust_devices">iPhone, Android y Windows</li>
+          </ul>
         </div>
-      </div>
 
-      <div class="relative mx-auto w-full max-w-4xl">
-        <div class="relative overflow-hidden rounded-2xl border border-white/15 bg-white/[0.07] p-4 shadow-2xl backdrop-blur-2xl">
-          <div class="rounded-[1.5rem] border border-white/10 bg-slate-950/70 p-5">
-            <div class="mb-6 flex items-center justify-between">
-              <div class="flex items-center gap-2">
-                <span class="h-3 w-3 rounded-full bg-red-400"></span>
-                <span class="h-3 w-3 rounded-full bg-amber-300"></span>
-                <span class="h-3 w-3 rounded-full bg-emerald-400"></span>
-              </div>
-              <span class="rounded-full bg-emerald-400/10 px-3 py-1 text-xs font-bold text-emerald-200" data-i18n="conn_active">Conexión activa</span>
+        <div class="product-preview" aria-label="Vista previa de AirDows">
+          <div class="preview-toolbar">
+            <span class="toolbar-brand"><img src="/assets/favicon.png" alt="" width="22" height="22">AirDows</span>
+            <span class="connection-state" data-i18n="conn_ready">Listo para conectar</span>
+          </div>
+
+          <div class="preview-body">
+            <div class="pairing-pane">
+              <span class="pane-label" data-i18n="preview_step_one">Paso 1</span>
+              <h2 data-i18n="scan_title">Abre AirDows en tu celular</h2>
+              <p data-i18n="scan_desc">Escanea para comenzar desde el navegador.</p>
+              <div id="landing-qr" class="qr-wrap" role="link" tabindex="0" aria-label="Abrir AirDows en el celular" data-i18n-aria="qr_aria"></div>
             </div>
 
-            <div id="landing-drop-zone" class="landing-drop-zone rounded-3xl p-5" tabindex="0">
-              <div class="flex items-center justify-between gap-4">
-                <div>
-                  <p class="text-sm font-bold text-white" data-i18n="drop_title">Suelta tus archivos aquí</p>
-                  <p id="landing-drop-status" class="mt-1 text-xs text-slate-400" data-i18n="drop_desc">Ready for a direct transfer</p>
-                </div>
-                <div id="landing-pet" class="landing-pet air-pet--idle" aria-label="Air-pet" role="img"></div>
-              </div>
-              <div class="mt-4 flex flex-wrap gap-2 text-[11px] font-bold text-slate-300">
-                <span class="rounded-full border border-white/10 bg-white/5 px-3 py-1" data-i18n="qr_badge">Emparejamiento QR</span>
-                <span class="rounded-full border border-white/10 bg-white/5 px-3 py-1" data-i18n="quality_badge">Calidad original</span>
-                <span class="rounded-full border border-emerald-300/20 bg-emerald-300/10 px-3 py-1 text-emerald-200" data-i18n="route_badge">Ruta automática protegida</span>
-              </div>
-            </div>
+            <div class="transfer-pane">
+              <span class="pane-label" data-i18n="preview_step_two">Paso 2</span>
+              <h2 data-i18n="transfer_title">Tu archivo, en camino</h2>
+              <p data-i18n="transfer_desc">Ambos dispositivos permanecen conectados durante el envío.</p>
 
-            <div class="grid gap-4 sm:grid-cols-2">
-              <div class="rounded-3xl border border-white/10 bg-white/[0.06] p-5">
-                <div class="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-500/15 text-blue-200">
-                  <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                    <path d="M12 16V4m0 0L7 9m5-5 5 5M5 16v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                  </svg>
+              <div class="file-transfer">
+                <div class="file-heading">
+                  <div class="file-name"><strong>Video_del_viaje.mov</strong><span data-i18n="file_meta">74 MB · calidad original</span></div>
+                  <span class="file-type">MOV</span>
                 </div>
-                <p class="text-sm font-bold text-white">Video_4K_final.mov</p>
-                <p class="mt-1 text-xs text-slate-400" data-i18n="video_desc">Calidad original hacia tu PC</p>
-                <div class="mt-5 h-2 overflow-hidden rounded-full bg-white/10">
-                  <div class="h-full w-[82%] rounded-full bg-gradient-to-r from-blue-400 to-fuchsia-400"></div>
-                </div>
-              </div>
-
-              <div class="rounded-3xl border border-white/10 bg-white/[0.06] p-5">
-                <div class="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-fuchsia-500/15 text-fuchsia-200">
-                  <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                    <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2" stroke="currentColor" stroke-width="2"/>
-                    <rect x="9" y="3" width="6" height="4" rx="1" stroke="currentColor" stroke-width="2"/>
-                  </svg>
-                </div>
-                <p class="text-sm font-bold text-white">air.dows/link</p>
-                <p class="mt-1 text-xs text-slate-400" data-i18n="clipboard_sync">Portapapeles sincronizado</p>
-                <button class="mt-5 w-full rounded-full bg-white/10 px-4 py-2 text-xs font-bold text-white" data-i18n="copy">Copiar</button>
-              </div>
-            </div>
-
-            <div class="mt-4 rounded-3xl border border-emerald-300/20 bg-emerald-400/10 p-5">
-              <div class="flex items-center justify-between gap-4">
-                <div>
-                  <p class="text-sm font-bold text-emerald-100" data-i18n="transfer_completed">Transferencia completada</p>
-                  <p class="mt-1 text-xs text-emerald-200/70" data-i18n="transfer_success_desc">Archivo recibido en su calidad original.</p>
-                </div>
-                <span class="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-300 text-slate-950">
-                  <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                    <path d="M20 6 9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-                  </svg>
-                </span>
+                <div class="progress-track" aria-label="82%"><div class="progress-fill"></div></div>
+                <div class="progress-meta"><span data-i18n="sending">Enviando</span><span>82%</span></div>
+                <div class="transfer-footer"><span class="transfer-note" data-i18n="devices_connected">Dos dispositivos conectados</span><span class="air-pet" role="img" aria-label="Air-pet transfiriendo"></span></div>
               </div>
             </div>
           </div>
@@ -181,242 +108,147 @@
       </div>
     </section>
 
-    <section class="border-y border-white/10 bg-white/[0.03]">
-      <div class="mx-auto max-w-5xl px-5 py-20 text-center sm:px-8 lg:px-10">
-        <h2 class="text-3xl font-extrabold tracking-tight text-white sm:text-5xl" data-i18n="section_title">De tu celular al PC, sin pasos innecesarios.</h2>
-        <p class="mx-auto mt-6 max-w-3xl text-lg leading-8 text-slate-300" data-i18n="section_desc">
-          Abre AirDows en ambos dispositivos, empareja con un QR y mueve el archivo. Sin mandártelo por WhatsApp, sin comprimirlo y sin subirlo para descargarlo otra vez.
-        </p>
+    <section class="section-band">
+      <div class="shell section">
+        <div class="section-heading">
+          <p class="section-kicker" data-i18n="benefits_kicker">Hecho para una sola tarea</p>
+          <h2 data-i18n="benefits_title">Mover el archivo, sin dar la vuelta.</h2>
+          <p data-i18n="benefits_desc">No necesitas enviártelo por correo, subirlo a una nube ni perder calidad en un chat.</p>
+        </div>
+
+        <div class="benefit-grid">
+          <article class="benefit"><span class="benefit-number">01</span><h3 data-i18n="benefit_one_title">El archivo llega igual</h3><p data-i18n="benefit_one_desc">AirDows no reduce la resolución ni vuelve a comprimir lo que seleccionas.</p></article>
+          <article class="benefit"><span class="benefit-number">02</span><h3 data-i18n="benefit_two_title">Empiezas sin registro</h3><p data-i18n="benefit_two_desc">Abre la página en los dos dispositivos y empareja con QR o código.</p></article>
+          <article class="benefit"><span class="benefit-number">03</span><h3 data-i18n="benefit_three_title">Se adapta a tu red</h3><p data-i18n="benefit_three_desc">Intenta conectar los dispositivos directamente y usa una ruta de respaldo cuando hace falta.</p></article>
+        </div>
       </div>
     </section>
 
-    <section class="mx-auto max-w-7xl px-5 py-20 sm:px-8 lg:px-10">
-      <div class="grid gap-5 md:grid-cols-3">
-        <article class="rounded-3xl border border-white/10 bg-white/[0.06] p-7 shadow-2xl backdrop-blur-xl transition hover:-translate-y-1 hover:border-blue-300/30">
-          <div class="mb-6 flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-500/15 text-blue-200">
-            <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <path d="M4 7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7Z" stroke="currentColor" stroke-width="2"/>
-              <path d="m8 13 2.2-2.2a1 1 0 0 1 1.4 0L16 15" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-            </svg>
-          </div>
-          <h3 class="text-xl font-extrabold text-white" data-i18n="feat1_title">Conserva la calidad original</h3>
-          <p class="mt-4 leading-7 text-slate-300" data-i18n="feat1_desc">AirDows transfiere el archivo sin reducir su resolución ni recomprimirlo.</p>
-        </article>
+    <section id="como-usarlo">
+      <div class="shell section">
+        <div class="section-heading">
+          <p class="section-kicker" data-i18n="steps_kicker">Cómo usar AirDows</p>
+          <h2 data-i18n="steps_title">Del celular al PC en tres pasos.</h2>
+          <p data-i18n="steps_desc">Los dos dispositivos deben estar activos hasta que termine la transferencia.</p>
+        </div>
 
-        <article class="rounded-3xl border border-white/10 bg-white/[0.06] p-7 shadow-2xl backdrop-blur-xl transition hover:-translate-y-1 hover:border-fuchsia-300/30">
-          <div class="mb-6 flex h-12 w-12 items-center justify-center rounded-2xl bg-fuchsia-500/15 text-fuchsia-200">
-            <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <path d="M12 3 5 6v5c0 4.5 2.8 8.4 7 10 4.2-1.6 7-5.5 7-10V6l-7-3Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
-              <path d="M9.5 12.5 11 14l3.5-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-          </div>
-          <h3 class="text-xl font-extrabold text-white" data-i18n="feat2_title">Conexión protegida</h3>
-          <p class="mt-4 leading-7 text-slate-300" data-i18n="feat2_desc">AirDows intenta conectar tus dispositivos de forma directa. Si no es posible, completa el envío por una ruta de respaldo protegida.</p>
-        </article>
-
-        <article class="rounded-3xl border border-white/10 bg-white/[0.06] p-7 shadow-2xl backdrop-blur-xl transition hover:-translate-y-1 hover:border-cyan-300/30">
-          <div class="mb-6 flex h-12 w-12 items-center justify-center rounded-2xl bg-cyan-500/15 text-cyan-200">
-            <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2" stroke="currentColor" stroke-width="2"/>
-              <rect x="9" y="3" width="6" height="4" rx="1" stroke="currentColor" stroke-width="2"/>
-              <path d="M9 13h6M9 17h4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-            </svg>
-          </div>
-          <h3 class="text-xl font-extrabold text-white" data-i18n="feat3_title">Abre, escanea y transfiere</h3>
-          <p class="mt-4 leading-7 text-slate-300" data-i18n="feat3_desc">No necesitas crear una cuenta ni instalar una aplicación para comenzar.</p>
-        </article>
+        <div class="steps-grid">
+          <article class="step"><span class="step-number">1</span><h3 data-i18n="step_one_title">Abre AirDows</h3><p data-i18n="step_one_desc">Entra desde el celular y el computador, sin crear una cuenta.</p></article>
+          <article class="step"><span class="step-number">2</span><h3 data-i18n="step_two_title">Escanea el QR</h3><p data-i18n="step_two_desc">Empareja los dispositivos con el código temporal que aparece en pantalla.</p></article>
+          <article class="step"><span class="step-number">3</span><h3 data-i18n="step_three_title">Elige y envía</h3><p data-i18n="step_three_desc">Selecciona el archivo y mantén ambas pantallas activas mientras llega.</p></article>
+        </div>
       </div>
     </section>
 
-    <section class="border-t border-white/10 px-5 py-20 text-center sm:px-8">
-      <div class="mx-auto max-w-3xl">
-        <p class="text-sm font-bold uppercase text-cyan-300" data-i18n="final_eyebrow">Listo cuando tus dispositivos lo estén</p>
-        <h2 class="mt-4 text-3xl font-extrabold text-white sm:text-4xl" data-i18n="final_title">Ese archivo ya no tiene que pasar por WhatsApp.</h2>
-        <p class="mx-auto mt-5 max-w-2xl text-lg leading-8 text-slate-300" data-i18n="final_desc">Abre AirDows en tu celular y en tu PC. El código de conexión expira y ambos dispositivos deben permanecer activos durante la transferencia.</p>
-        <a href="/app" data-umami-event="landing_final_cta" class="mt-8 inline-flex items-center justify-center rounded-lg bg-blue-500 px-8 py-4 font-extrabold text-white transition hover:bg-cyan-500" data-i18n="final_cta">Transferir un archivo</a>
+    <section class="section-band">
+      <div class="shell section">
+        <div class="section-heading">
+          <p class="section-kicker" data-i18n="faq_kicker">Antes de empezar</p>
+          <h2 data-i18n="faq_title">Preguntas frecuentes.</h2>
+        </div>
+
+        <div class="faq-list">
+          <details><summary data-i18n="faq_network_q">¿Funciona entre redes diferentes?</summary><p data-i18n="faq_network_a">Sí. AirDows intenta una conexión directa y puede usar una ruta de respaldo si alguna red la bloquea. La velocidad depende de ambos dispositivos y sus conexiones.</p></details>
+          <details><summary data-i18n="faq_install_q">¿Tengo que instalar una aplicación?</summary><p data-i18n="faq_install_a">No para comenzar. Funciona en el navegador y también puedes instalarla como aplicación web si tu dispositivo ofrece esa opción.</p></details>
+          <details><summary data-i18n="faq_storage_q">¿AirDows guarda mis archivos?</summary><p data-i18n="faq_storage_a">No crea un enlace para descargarlos después. Los dos dispositivos deben estar conectados durante el envío.</p></details>
+          <details><summary data-i18n="faq_iphone_q">¿Funciona en iPhone?</summary><p data-i18n="faq_iphone_a">Sí desde Safari. Mantén la pantalla activa durante transferencias grandes para evitar que el sistema pause la pestaña.</p></details>
+        </div>
       </div>
+    </section>
+
+    <section class="shell final-cta">
+      <div class="final-cta-copy"><p class="section-kicker" data-i18n="final_kicker">Listo cuando tú lo estés</p><h2 data-i18n="final_title">Ese archivo ya no tiene que pasar por WhatsApp.</h2><p data-i18n="final_desc">Abre AirDows en los dos dispositivos y comienza gratis.</p></div>
+      <a class="button" href="/app" data-umami-event="landing_final_cta" data-i18n="final_cta">Transferir un archivo</a>
     </section>
   </main>
 
-  <footer class="border-t border-white/10 px-5 py-8 text-sm text-slate-500">
-    <div class="mx-auto flex max-w-7xl flex-col items-center justify-between gap-5 sm:flex-row">
-      <p data-i18n="footer">© 2026 AirDows. Todos los derechos reservados.</p>
-      <nav class="flex flex-wrap justify-center gap-x-5 gap-y-2" aria-label="Páginas de confianza">
-        <a href="/como-funciona" class="transition hover:text-white" data-i18n="nav_how">Cómo funciona</a>
-        <a href="/privacidad" class="transition hover:text-white" data-i18n="nav_privacy">Privacidad</a>
-        <a href="/seguridad" class="transition hover:text-white" data-i18n="nav_security">Seguridad</a>
-      </nav>
+  <footer class="site-footer">
+    <div class="shell footer-inner">
+      <span data-i18n="footer">© 2026 AirDows. Todos los derechos reservados.</span>
+      <nav class="footer-links" aria-label="Páginas de confianza"><a href="/como-funciona" data-i18n="nav_how">Cómo funciona</a><a href="/privacidad" data-i18n="nav_privacy">Privacidad</a><a href="/seguridad" data-i18n="nav_security">Seguridad</a></nav>
     </div>
   </footer>
 
+  <script src="/js/qrcode-generator.js"></script>
+  <script src="/js/qr-manager.js"></script>
   <script>
     const i18n = {
       en: {
         title: "Transfer files from phone to PC wirelessly | AirDows",
-        description: "Move photos, videos and documents from your phone to your PC with a QR code. No account, no compression and no installation required to start.",
+        description: "Move photos, videos and documents from your phone to your PC with a QR code. No account, compression or installation required to start.",
         og_title: "Transfer files from phone to PC wirelessly | AirDows",
-        og_description: "Scan a QR code and move files in their original quality. No account or installation required to start.",
-        header_logo_aria: "AirDows Home",
-        nav_how: "How it works",
-        nav_privacy: "Privacy",
-        nav_security: "Security",
-        open_app: "Open AirDows",
-        hero_badge: "iPhone, Android and Windows · No installation",
-        hero_title: "Move files from your phone to your PC wirelessly.",
-        hero_desc: "Scan a QR code and transfer photos, videos and documents in their original quality. No WhatsApp detour and no upload-download cycle.",
-        hero_btn: "Transfer now",
-        trust_account: "No account",
-        trust_install: "No installation to start",
-        trust_beta: "Free beta",
-        conn_active: "Active connection",
-        qr_badge: "QR pairing",
-        quality_badge: "Original quality",
-        route_badge: "Protected automatic route",
-        video_desc: "Original quality to your PC",
-        clipboard_sync: "Synced clipboard",
-        copy: "Copy",
-        transfer_completed: "Transfer completed",
-        transfer_success_desc: "File received in its original quality.",
-        section_title: "From your phone to your PC, without extra steps.",
-        section_desc: "Open AirDows on both devices, pair with a QR code and move the file. No WhatsApp compression and no upload-download detour.",
-        feat1_title: "Keep the original quality",
-        feat1_desc: "AirDows transfers the file without reducing its resolution or recompressing it.",
-        feat2_title: "Protected connection",
-        feat2_desc: "AirDows tries to connect your devices directly. If that is not possible, it completes the transfer through a protected fallback route.",
-        feat3_title: "Open, scan and transfer",
-        feat3_desc: "You do not need an account or an installed application to get started.",
-        drop_title: "Drop files here",
-        drop_desc: "Ready to connect your devices",
-        final_eyebrow: "Ready when your devices are",
-        final_title: "That file no longer needs to go through WhatsApp.",
-        final_desc: "Open AirDows on your phone and PC. The pairing code expires and both devices must remain active during the transfer.",
-        final_cta: "Transfer a file",
-        footer: "© 2026 AirDows. All rights reserved."
+        og_description: "Scan a QR code and move files without using chats as a bridge. No account or installation required to start.",
+        header_logo_aria: "AirDows home", nav_how: "How it works", nav_privacy: "Privacy", nav_security: "Security", open_app: "Open AirDows",
+        hero_badge: "Public beta · free for now", hero_title: "Move files from your phone to your PC wirelessly.", hero_desc: "Scan a QR code and move photos, videos or documents without using chats as a bridge. The file arrives just as you selected it.", hero_btn: "Transfer now", see_how: "See how it works",
+        trust_account: "No account", trust_quality: "No file compression", trust_devices: "iPhone, Android and Windows", conn_ready: "Ready to connect",
+        preview_step_one: "Step 1", scan_title: "Open AirDows on your phone", scan_desc: "Scan to start from your browser.", qr_aria: "Open AirDows on your phone",
+        preview_step_two: "Step 2", transfer_title: "Your file, on its way", transfer_desc: "Both devices stay connected during the transfer.", file_meta: "74 MB · original quality", sending: "Sending", devices_connected: "Two devices connected",
+        benefits_kicker: "Built for one job", benefits_title: "Move the file without taking the long way around.", benefits_desc: "No emailing it to yourself, uploading it to a cloud, or losing quality in a chat.",
+        benefit_one_title: "The file arrives unchanged", benefit_one_desc: "AirDows does not reduce the resolution or recompress what you select.", benefit_two_title: "Start without signing up", benefit_two_desc: "Open the page on both devices and pair with a QR code or PIN.", benefit_three_title: "Adapts to your network", benefit_three_desc: "It tries to connect the devices directly and uses a fallback route when needed.",
+        steps_kicker: "How to use AirDows", steps_title: "Phone to PC in three steps.", steps_desc: "Both devices need to stay active until the transfer finishes.", step_one_title: "Open AirDows", step_one_desc: "Visit AirDows on your phone and computer without creating an account.", step_two_title: "Scan the QR code", step_two_desc: "Pair the devices with the temporary code shown on screen.", step_three_title: "Choose and send", step_three_desc: "Select the file and keep both screens active while it arrives.",
+        faq_kicker: "Before you start", faq_title: "Frequently asked questions.", faq_network_q: "Does it work across different networks?", faq_network_a: "Yes. AirDows tries a direct connection and can use a fallback route if a network blocks it. Speed depends on both devices and their connections.", faq_install_q: "Do I need to install an app?", faq_install_a: "Not to get started. It works in the browser, and you can install it as a web app if your device offers that option.", faq_storage_q: "Does AirDows store my files?", faq_storage_a: "It does not create a link to download later. Both devices need to be connected during the transfer.", faq_iphone_q: "Does it work on iPhone?", faq_iphone_a: "Yes, through Safari. Keep the screen active during large transfers so the system does not pause the tab.",
+        final_kicker: "Ready when you are", final_title: "That file no longer needs to go through WhatsApp.", final_desc: "Open AirDows on both devices and start for free.", final_cta: "Transfer a file", footer: "© 2026 AirDows. All rights reserved."
       },
       es: {
         title: "Pasar archivos del celular al PC sin cable | AirDows",
         description: "Pasa fotos, videos y documentos del celular al PC con un QR. Sin cuenta, sin compresión y sin instalar para empezar.",
         og_title: "Pasa archivos del celular al PC sin cables | AirDows",
-        og_description: "Escanea un QR y transfiere archivos en su calidad original. Sin cuenta y sin instalar para empezar.",
-        header_logo_aria: "AirDows inicio",
-        nav_how: "Cómo funciona",
-        nav_privacy: "Privacidad",
-        nav_security: "Seguridad",
-        open_app: "Abrir AirDows",
-        hero_badge: "iPhone, Android y Windows · Sin instalar",
-        hero_title: "Pasa archivos del celular al PC sin cables.",
-        hero_desc: "Escanea un QR y transfiere fotos, videos y documentos en su calidad original. Sin mandártelos por WhatsApp ni subirlos para descargarlos otra vez.",
-        hero_btn: "Transferir ahora",
-        trust_account: "Sin cuenta",
-        trust_install: "Sin instalar para empezar",
-        trust_beta: "Beta gratuita",
-        conn_active: "Conexión activa",
-        qr_badge: "Emparejamiento QR",
-        quality_badge: "Calidad original",
-        route_badge: "Ruta automática protegida",
-        video_desc: "Calidad original hacia tu PC",
-        clipboard_sync: "Portapapeles sincronizado",
-        copy: "Copiar",
-        transfer_completed: "Transferencia completada",
-        transfer_success_desc: "Archivo recibido en su calidad original.",
-        section_title: "De tu celular al PC, sin pasos innecesarios.",
-        section_desc: "Abre AirDows en ambos dispositivos, empareja con un QR y mueve el archivo. Sin mandártelo por WhatsApp, sin comprimirlo y sin subirlo para descargarlo otra vez.",
-        feat1_title: "Conserva la calidad original",
-        feat1_desc: "AirDows transfiere el archivo sin reducir su resolución ni recomprimirlo.",
-        feat2_title: "Conexión protegida",
-        feat2_desc: "AirDows intenta conectar tus dispositivos de forma directa. Si no es posible, completa el envío por una ruta de respaldo protegida.",
-        feat3_title: "Abre, escanea y transfiere",
-        feat3_desc: "No necesitas crear una cuenta ni instalar una aplicación para comenzar.",
-        drop_title: "Suelta tus archivos aquí",
-        drop_desc: "Listo para conectar tus dispositivos",
-        final_eyebrow: "Listo cuando tus dispositivos lo estén",
-        final_title: "Ese archivo ya no tiene que pasar por WhatsApp.",
-        final_desc: "Abre AirDows en tu celular y en tu PC. El código de conexión expira y ambos dispositivos deben permanecer activos durante la transferencia.",
-        final_cta: "Transferir un archivo",
-        footer: "© 2026 AirDows. Todos los derechos reservados."
+        og_description: "Escanea un QR y mueve archivos sin usar chats como puente. Sin cuenta y sin instalar para empezar.",
+        header_logo_aria: "AirDows inicio", nav_how: "Cómo funciona", nav_privacy: "Privacidad", nav_security: "Seguridad", open_app: "Abrir AirDows",
+        hero_badge: "Beta pública · gratis por ahora", hero_title: "Pasa archivos del celular al PC sin cables.", hero_desc: "Escanea un QR y mueve fotos, videos o documentos sin usar chats como puente. El archivo llega tal como lo seleccionaste.", hero_btn: "Transferir ahora", see_how: "Ver cómo funciona",
+        trust_account: "Sin cuenta", trust_quality: "No comprime tus archivos", trust_devices: "iPhone, Android y Windows", conn_ready: "Listo para conectar",
+        preview_step_one: "Paso 1", scan_title: "Abre AirDows en tu celular", scan_desc: "Escanea para comenzar desde el navegador.", qr_aria: "Abrir AirDows en el celular",
+        preview_step_two: "Paso 2", transfer_title: "Tu archivo, en camino", transfer_desc: "Ambos dispositivos permanecen conectados durante el envío.", file_meta: "74 MB · calidad original", sending: "Enviando", devices_connected: "Dos dispositivos conectados",
+        benefits_kicker: "Hecho para una sola tarea", benefits_title: "Mover el archivo, sin dar la vuelta.", benefits_desc: "No necesitas enviártelo por correo, subirlo a una nube ni perder calidad en un chat.",
+        benefit_one_title: "El archivo llega igual", benefit_one_desc: "AirDows no reduce la resolución ni vuelve a comprimir lo que seleccionas.", benefit_two_title: "Empiezas sin registro", benefit_two_desc: "Abre la página en los dos dispositivos y empareja con QR o código.", benefit_three_title: "Se adapta a tu red", benefit_three_desc: "Intenta conectar los dispositivos directamente y usa una ruta de respaldo cuando hace falta.",
+        steps_kicker: "Cómo usar AirDows", steps_title: "Del celular al PC en tres pasos.", steps_desc: "Los dos dispositivos deben estar activos hasta que termine la transferencia.", step_one_title: "Abre AirDows", step_one_desc: "Entra desde el celular y el computador, sin crear una cuenta.", step_two_title: "Escanea el QR", step_two_desc: "Empareja los dispositivos con el código temporal que aparece en pantalla.", step_three_title: "Elige y envía", step_three_desc: "Selecciona el archivo y mantén ambas pantallas activas mientras llega.",
+        faq_kicker: "Antes de empezar", faq_title: "Preguntas frecuentes.", faq_network_q: "¿Funciona entre redes diferentes?", faq_network_a: "Sí. AirDows intenta una conexión directa y puede usar una ruta de respaldo si alguna red la bloquea. La velocidad depende de ambos dispositivos y sus conexiones.", faq_install_q: "¿Tengo que instalar una aplicación?", faq_install_a: "No para comenzar. Funciona en el navegador y también puedes instalarla como aplicación web si tu dispositivo ofrece esa opción.", faq_storage_q: "¿AirDows guarda mis archivos?", faq_storage_a: "No crea un enlace para descargarlos después. Los dos dispositivos deben estar conectados durante el envío.", faq_iphone_q: "¿Funciona en iPhone?", faq_iphone_a: "Sí desde Safari. Mantén la pantalla activa durante transferencias grandes para evitar que el sistema pause la pestaña.",
+        final_kicker: "Listo cuando tú lo estés", final_title: "Ese archivo ya no tiene que pasar por WhatsApp.", final_desc: "Abre AirDows en los dos dispositivos y comienza gratis.", final_cta: "Transferir un archivo", footer: "© 2026 AirDows. Todos los derechos reservados."
       }
     };
 
     function translatePage() {
-      const userLang = navigator.language || navigator.userLanguage;
-      const lang = userLang.startsWith('es') ? 'es' : 'en';
-      document.documentElement.lang = lang;
-
-      // Text content translations
-      document.querySelectorAll('[data-i18n]').forEach(el => {
-        const key = el.getAttribute('data-i18n');
-        if (i18n[lang][key]) el.textContent = i18n[lang][key];
+      const language = (navigator.language || navigator.userLanguage || "es").startsWith("es") ? "es" : "en";
+      document.documentElement.lang = language;
+      document.querySelectorAll("[data-i18n]").forEach((element) => {
+        const value = i18n[language][element.dataset.i18n];
+        if (value) element.textContent = value;
       });
-
-      // ARIA labels
-      document.querySelectorAll('[data-i18n-aria]').forEach(el => {
-        const key = el.getAttribute('data-i18n-aria');
-        if (i18n[lang][key]) el.setAttribute('aria-label', i18n[lang][key]);
+      document.querySelectorAll("[data-i18n-aria]").forEach((element) => {
+        const value = i18n[language][element.dataset.i18nAria];
+        if (value) element.setAttribute("aria-label", value);
       });
-
-      // Meta descriptions
-      document.querySelectorAll('[data-i18n-meta]').forEach(el => {
-        const key = el.getAttribute('data-i18n-meta');
-        if (i18n[lang][key]) el.setAttribute('content', i18n[lang][key]);
+      document.querySelectorAll("[data-i18n-meta]").forEach((element) => {
+        const value = i18n[language][element.dataset.i18nMeta];
+        if (value) element.setAttribute("content", value);
       });
-
-      // Title
-      if (i18n[lang].title) document.title = i18n[lang].title;
+      document.title = i18n[language].title;
     }
 
-    document.addEventListener('DOMContentLoaded', () => {
+    function openAirDows(eventName) {
+      if (window.umami?.track) window.umami.track(eventName);
+      window.location.href = "/app";
+    }
+
+    document.addEventListener("DOMContentLoaded", () => {
       translatePage();
 
-      if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/sw.js').catch(() => {});
-        }, { once: true });
+      const qrContainer = document.getElementById("landing-qr");
+      if (typeof QRManager !== "undefined") {
+        QRManager.draw(qrContainer, `${window.location.origin}/app`, 126);
       }
 
-      const dropZone = document.getElementById('landing-drop-zone');
-      const pet = document.getElementById('landing-pet');
-      const status = document.getElementById('landing-drop-status');
-
-      const setPetState = (state) => {
-        pet.className = `landing-pet air-pet--${state}`;
-      };
-
-      const updateFromDiagnostics = () => {
-        const diagnostics = window.airDowsDiagnostics;
-        if (!diagnostics || !diagnostics.direction) return;
-
-        const turbo = diagnostics.speedMBps >= 10 && diagnostics.direction;
-        setPetState(turbo ? 'turbo' : 'transferring');
-        status.textContent = `${diagnostics.percent.toFixed(1)}% · ${diagnostics.speedMBps.toFixed(2)} MB/s`;
-      };
-
-      setInterval(updateFromDiagnostics, 500);
-
-      ['dragenter', 'dragover'].forEach((eventName) => {
-        dropZone.addEventListener(eventName, (event) => {
+      qrContainer.addEventListener("click", () => openAirDows("landing_qr_open"));
+      qrContainer.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
-          dropZone.classList.add('is-over');
-          setPetState('transferring');
-        });
+          openAirDows("landing_qr_open");
+        }
       });
 
-      ['dragleave', 'drop'].forEach((eventName) => {
-        dropZone.addEventListener(eventName, (event) => {
-          event.preventDefault();
-          dropZone.classList.remove('is-over');
-        });
-      });
-
-      dropZone.addEventListener('drop', (event) => {
-        if (!event.dataTransfer.files.length) return;
-        setPetState('turbo');
-        status.textContent = 'Archivo listo. Abre AirDows para enviarlo.';
-      });
-
-      dropZone.addEventListener('click', () => {
-        if (window.umami) window.umami.track('landing_drop_zone_open');
-        window.location.href = '/app';
-      });
+      if ("serviceWorker" in navigator) {
+        window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js").catch(() => {}), { once: true });
+      }
     });
   </script>
 </body>
