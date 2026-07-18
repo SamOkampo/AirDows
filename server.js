@@ -288,8 +288,11 @@ app.use(apiLimiter);
 // REDIRECCIÓN FORZADA: Si el usuario escribe /app.html en la URL,
 // lo pateamos automáticamente a /app para limpiar el navegador.
 app.use((req, res, next) => {
+  if (req.path === '/index.html') {
+    return res.redirect(301, '/');
+  }
   if (req.path === '/app.html') {
-    return res.redirect(301, '/app');
+    return res.redirect(301, `/app${req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : ''}`);
   }
   next();
 });

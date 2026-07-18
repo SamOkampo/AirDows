@@ -1,5 +1,5 @@
 const CACHE_NAME = 'airdows-shell-v1';
-const APP_SHELL = ['/app.html', '/style.css', '/js/app.js', '/js/socket-manager.js', '/js/webrtc-manager.js'];
+const APP_SHELL = ['/app', '/style.css', '/js/app.js', '/js/socket-manager.js', '/js/webrtc-manager.js'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)));

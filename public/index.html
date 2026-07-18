@@ -9,6 +9,19 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    .air-logo-mark { background: linear-gradient(145deg, #00e5f5 10%, #168bff 42%, #8a3ffc 72%, #ef2bff); -webkit-background-clip: text; background-clip: text; color: transparent; font-size: 2rem; font-weight: 800; line-height: 1; }
+    .landing-drop-zone { border: 1px dashed rgba(0, 229, 245, .42); background: rgba(16, 19, 29, .7); transition: border-color .2s, background .2s, transform .2s; }
+    .landing-drop-zone.is-over { border-color: #00e5f5; background: rgba(0, 229, 245, .1); transform: translateY(-2px); }
+    .landing-pet { align-items: center; background: #168bff; border: 2px solid #00e5f5; border-radius: 14px; display: inline-flex; height: 42px; justify-content: center; position: relative; width: 50px; }
+    .landing-pet::before { background: #7de8ff; border-radius: 50%; box-shadow: 12px 0 #7de8ff; content: ''; height: 5px; left: 15px; position: absolute; top: 14px; width: 5px; }
+    .landing-pet::after { border-bottom: 2px solid #7de8ff; border-radius: 0 0 8px 8px; bottom: 8px; content: ''; height: 4px; position: absolute; width: 10px; }
+    .landing-pet.air-pet--transferring, .landing-pet.air-pet--turbo { animation: landing-pet-bob .65s ease-in-out infinite; }
+    .landing-pet.air-pet--turbo { border-color: #25e6a4; box-shadow: 0 0 25px rgba(37, 230, 164, .3); }
+    .landing-pet.air-pet--error { border-color: #ff7182; transform: rotate(-5deg); }
+    @keyframes landing-pet-bob { 50% { transform: translateY(-4px); } }
+    @media (prefers-reduced-motion: reduce) { .landing-pet { animation: none !important; } }
+  </style>
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
@@ -36,18 +49,14 @@
   </div>
 
   <header class="mx-auto flex w-full max-w-7xl items-center justify-between px-5 py-5 sm:px-8 lg:px-10">
-    <a href="index.html" class="group flex items-center gap-3" aria-label="AirDows home" data-i18n-aria="header_logo_aria">
+    <a href="/" class="group flex items-center gap-3" aria-label="AirDows home" data-i18n-aria="header_logo_aria">
       <span class="flex h-10 w-10 items-center justify-center rounded-2xl border border-white/15 bg-white/10 shadow-glow backdrop-blur-xl transition group-hover:border-blue-300/50">
-        <svg class="h-6 w-6 text-blue-300" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <path d="M12 3L3 20h18L12 3Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
-          <path d="M12 9l4.7 9.2H7.3L12 9Z" fill="currentColor" opacity="0.28"/>
-          <path d="M12 16V11" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        </svg>
+        <span class="air-logo-mark" aria-hidden="true">A</span>
       </span>
       <span class="text-lg font-extrabold tracking-tight sm:text-xl">AirDows</span>
     </a>
 
-    <a href="app.html" class="rounded-full border border-white/15 bg-white/10 px-5 py-2.5 text-sm font-bold text-white shadow-purpleGlow backdrop-blur-xl transition hover:border-blue-300/50 hover:bg-white/15" data-i18n="open_app">
+    <a href="/app" class="rounded-full border border-white/15 bg-white/10 px-5 py-2.5 text-sm font-bold text-white shadow-purpleGlow backdrop-blur-xl transition hover:border-blue-300/50 hover:bg-white/15" data-i18n="open_app">
       Open App
     </a>
   </header>
@@ -69,7 +78,7 @@
         </p>
 
         <div class="mt-10 flex flex-col items-center gap-4 sm:flex-row sm:justify-center lg:justify-start">
-          <a href="app.html" class="group relative inline-flex w-full items-center justify-center overflow-hidden rounded-full bg-gradient-to-r from-blue-500 via-indigo-500 to-fuchsia-500 px-8 py-4 text-base font-extrabold text-white shadow-glow transition hover:scale-[1.02] hover:shadow-purpleGlow sm:w-auto">
+          <a href="/app" class="group relative inline-flex w-full items-center justify-center overflow-hidden rounded-full bg-gradient-to-r from-blue-500 via-indigo-500 to-fuchsia-500 px-8 py-4 text-base font-extrabold text-white shadow-glow transition hover:scale-[1.02] hover:shadow-purpleGlow sm:w-auto">
             <span class="absolute inset-0 translate-x-[-120%] bg-gradient-to-r from-transparent via-white/30 to-transparent transition duration-700 group-hover:translate-x-[120%]"></span>
             <span class="relative" data-i18n="hero_btn">Start Free Transfer</span>
           </a>
@@ -87,6 +96,21 @@
                 <span class="h-3 w-3 rounded-full bg-emerald-400"></span>
               </div>
               <span class="rounded-full bg-emerald-400/10 px-3 py-1 text-xs font-bold text-emerald-200" data-i18n="conn_active">Active connection</span>
+            </div>
+
+            <div id="landing-drop-zone" class="landing-drop-zone rounded-3xl p-5" tabindex="0">
+              <div class="flex items-center justify-between gap-4">
+                <div>
+                  <p class="text-sm font-bold text-white" data-i18n="drop_title">Drop files here</p>
+                  <p id="landing-drop-status" class="mt-1 text-xs text-slate-400" data-i18n="drop_desc">Ready for a direct transfer</p>
+                </div>
+                <div id="landing-pet" class="landing-pet air-pet--idle" aria-label="Air-pet" role="img"></div>
+              </div>
+              <div class="mt-4 flex flex-wrap gap-2 text-[11px] font-bold text-slate-300">
+                <span class="rounded-full border border-white/10 bg-white/5 px-3 py-1">P2P</span>
+                <span class="rounded-full border border-white/10 bg-white/5 px-3 py-1">64 KB chunks</span>
+                <span class="rounded-full border border-emerald-300/20 bg-emerald-300/10 px-3 py-1 text-emerald-200">No cloud</span>
+              </div>
             </div>
 
             <div class="grid gap-4 sm:grid-cols-2">
@@ -194,7 +218,7 @@
         header_logo_aria: "AirDows Home",
         open_app: "Open App",
         hero_badge: "Direct P2P for Windows, Android and iPhone",
-        hero_title: "The magic of AirDrop, now on your Windows.",
+        hero_title: "Stop sending files to yourself on WhatsApp.",
         hero_desc: "Transfer heavy videos, photos and links between your phone and your PC in seconds. No cables, no clouds, and no quality loss.",
         hero_btn: "Start Free Transfer",
         conn_active: "Active connection",
@@ -211,6 +235,8 @@
         feat2_desc: "Direct P2P connection. Your files are not stored on servers.",
         feat3_title: "Universal Clipboard",
         feat3_desc: "Copy on your phone, paste on your PC instantly.",
+        drop_title: "Drop files here",
+        drop_desc: "Ready for a direct transfer",
         footer: "© 2026 AirDows. All rights reserved."
       },
       es: {
@@ -219,7 +245,7 @@
         header_logo_aria: "AirDows inicio",
         open_app: "Abrir App",
         hero_badge: "P2P directo para Windows, Android y iPhone",
-        hero_title: "La magia de AirDrop, ahora en tu Windows.",
+        hero_title: "Deja de enviarte archivos por WhatsApp.",
         hero_desc: "Transfiere videos pesados, fotos y enlaces entre tu celular y tu PC en segundos. Sin cables, sin nubes y sin perder calidad.",
         hero_btn: "Iniciar Transferencia Gratis",
         conn_active: "Conexión activa",
@@ -236,6 +262,8 @@
         feat2_desc: "Conexión P2P directa. Tus archivos no se guardan en servidores.",
         feat3_title: "Portapapeles Universal",
         feat3_desc: "Copia en tu teléfono, pega en tu PC al instante.",
+        drop_title: "Suelta tus archivos aquí",
+        drop_desc: "Listo para una transferencia directa",
         footer: "© 2026 AirDows. Todos los derechos reservados."
       }
     };
@@ -267,7 +295,53 @@
       if (i18n[lang].title) document.title = i18n[lang].title;
     }
 
-    document.addEventListener('DOMContentLoaded', translatePage);
+    document.addEventListener('DOMContentLoaded', () => {
+      translatePage();
+
+      const dropZone = document.getElementById('landing-drop-zone');
+      const pet = document.getElementById('landing-pet');
+      const status = document.getElementById('landing-drop-status');
+
+      const setPetState = (state) => {
+        pet.className = `landing-pet air-pet--${state}`;
+      };
+
+      const updateFromDiagnostics = () => {
+        const diagnostics = window.airDowsDiagnostics;
+        if (!diagnostics || !diagnostics.direction) return;
+
+        const turbo = diagnostics.speedMBps >= 10 && diagnostics.direction;
+        setPetState(turbo ? 'turbo' : 'transferring');
+        status.textContent = `${diagnostics.percent.toFixed(1)}% · ${diagnostics.speedMBps.toFixed(2)} MB/s`;
+      };
+
+      setInterval(updateFromDiagnostics, 500);
+
+      ['dragenter', 'dragover'].forEach((eventName) => {
+        dropZone.addEventListener(eventName, (event) => {
+          event.preventDefault();
+          dropZone.classList.add('is-over');
+          setPetState('transferring');
+        });
+      });
+
+      ['dragleave', 'drop'].forEach((eventName) => {
+        dropZone.addEventListener(eventName, (event) => {
+          event.preventDefault();
+          dropZone.classList.remove('is-over');
+        });
+      });
+
+      dropZone.addEventListener('drop', (event) => {
+        if (!event.dataTransfer.files.length) return;
+        setPetState('turbo');
+        status.textContent = 'Archivo listo. Abre AirDows para enviarlo.';
+      });
+
+      dropZone.addEventListener('click', () => {
+        window.location.href = '/app';
+      });
+    });
   </script>
 </body>
 </html>

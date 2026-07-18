@@ -2,7 +2,7 @@
   "name": "AirDows",
   "short_name": "AirDows",
   "description": "Transferencia de archivos P2P segura",
-  "start_url": "/app.html",
+  "start_url": "/app",
   "display": "standalone",
   "background_color": "#0b1020",
   "theme_color": "#0b1020",

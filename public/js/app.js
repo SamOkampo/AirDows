@@ -367,7 +367,7 @@ document.addEventListener('DOMContentLoaded', () => {
     btnGenerate.classList.add('hidden');
 
     // Generate QR Code containing join URL
-    const joinUrl = `${window.location.origin}/app.html?code=${code}`;
+    const joinUrl = `${window.location.origin}/app?code=${code}`;
     qrcodeDiv.innerHTML = '';
     if (typeof QRCode === 'undefined') {
       showToast(translate('qr_library_fail'));
