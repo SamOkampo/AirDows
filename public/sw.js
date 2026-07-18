@@ -1,4 +1,4 @@
-const CACHE_NAME = 'airdows-shell-v5';
+const CACHE_NAME = 'airdows-shell-v6';
 const APP_SHELL = [
   '/',
   '/app',

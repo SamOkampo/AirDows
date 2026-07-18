@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Pasa fotos, videos y documentos del celular al PC con un QR. Sin cuenta, sin compresión y con conexión directa cuando la red lo permite." data-i18n-meta="description">
+  <meta name="description" content="Pasa fotos, videos y documentos del celular al PC con un QR. Sin cuenta, sin compresión y sin instalar para empezar." data-i18n-meta="description">
   <meta name="robots" content="index, follow">
   <link rel="canonical" href="https://airdows.com/">
   <meta property="og:type" content="website">
@@ -68,6 +68,12 @@
       <span class="text-lg font-extrabold tracking-tight sm:text-xl">AirDows</span>
     </a>
 
+    <nav class="hidden items-center gap-6 text-sm font-semibold text-slate-300 md:flex" aria-label="Información de confianza">
+      <a href="/como-funciona" class="transition hover:text-white" data-i18n="nav_how">Cómo funciona</a>
+      <a href="/privacidad" class="transition hover:text-white" data-i18n="nav_privacy">Privacidad</a>
+      <a href="/seguridad" class="transition hover:text-white" data-i18n="nav_security">Seguridad</a>
+    </nav>
+
     <a href="/app" data-umami-event="landing_header_cta" class="rounded-lg border border-white/15 bg-white/10 px-5 py-2.5 text-sm font-bold text-white backdrop-blur-xl transition hover:border-cyan-300/50 hover:bg-white/15" data-i18n="open_app">
       Abrir AirDows
     </a>
@@ -86,7 +92,7 @@
         </h1>
 
         <p class="mx-auto mt-7 max-w-2xl text-pretty text-lg leading-8 text-slate-300 sm:text-xl lg:mx-0" data-i18n="hero_desc">
-          Escanea un QR y transfiere fotos, videos y documentos en su calidad original. AirDows intenta conectar tus dispositivos directamente y usa un relay cifrado cuando la red lo requiere.
+          Escanea un QR y transfiere fotos, videos y documentos en su calidad original. Sin mandártelos por WhatsApp ni subirlos para descargarlos otra vez.
         </p>
 
         <div class="mt-9 flex flex-col items-center gap-4">
@@ -126,7 +132,7 @@
               <div class="mt-4 flex flex-wrap gap-2 text-[11px] font-bold text-slate-300">
                 <span class="rounded-full border border-white/10 bg-white/5 px-3 py-1" data-i18n="qr_badge">Emparejamiento QR</span>
                 <span class="rounded-full border border-white/10 bg-white/5 px-3 py-1" data-i18n="quality_badge">Calidad original</span>
-                <span class="rounded-full border border-emerald-300/20 bg-emerald-300/10 px-3 py-1 text-emerald-200" data-i18n="route_badge">Directa o relay cifrado</span>
+                <span class="rounded-full border border-emerald-300/20 bg-emerald-300/10 px-3 py-1 text-emerald-200" data-i18n="route_badge">Ruta automática protegida</span>
               </div>
             </div>
 
@@ -204,8 +210,8 @@
               <path d="M9.5 12.5 11 14l3.5-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
           </div>
-          <h3 class="text-xl font-extrabold text-white" data-i18n="feat2_title">Ruta directa cuando es posible</h3>
-          <p class="mt-4 leading-7 text-slate-300" data-i18n="feat2_desc">WebRTC intenta conectar los dispositivos directamente. Si la red lo bloquea, usa un relay cifrado como respaldo.</p>
+          <h3 class="text-xl font-extrabold text-white" data-i18n="feat2_title">Conexión protegida</h3>
+          <p class="mt-4 leading-7 text-slate-300" data-i18n="feat2_desc">AirDows intenta conectar tus dispositivos de forma directa. Si no es posible, completa el envío por una ruta de respaldo protegida.</p>
         </article>
 
         <article class="rounded-3xl border border-white/10 bg-white/[0.06] p-7 shadow-2xl backdrop-blur-xl transition hover:-translate-y-1 hover:border-cyan-300/30">
@@ -232,22 +238,32 @@
     </section>
   </main>
 
-  <footer class="border-t border-white/10 px-5 py-8 text-center text-sm text-slate-500">
-    <p data-i18n="footer">© 2026 AirDows. Todos los derechos reservados.</p>
+  <footer class="border-t border-white/10 px-5 py-8 text-sm text-slate-500">
+    <div class="mx-auto flex max-w-7xl flex-col items-center justify-between gap-5 sm:flex-row">
+      <p data-i18n="footer">© 2026 AirDows. Todos los derechos reservados.</p>
+      <nav class="flex flex-wrap justify-center gap-x-5 gap-y-2" aria-label="Páginas de confianza">
+        <a href="/como-funciona" class="transition hover:text-white" data-i18n="nav_how">Cómo funciona</a>
+        <a href="/privacidad" class="transition hover:text-white" data-i18n="nav_privacy">Privacidad</a>
+        <a href="/seguridad" class="transition hover:text-white" data-i18n="nav_security">Seguridad</a>
+      </nav>
+    </div>
   </footer>
 
   <script>
     const i18n = {
       en: {
         title: "Transfer files from phone to PC wirelessly | AirDows",
-        description: "Move photos, videos and documents from your phone to your PC with a QR code. No account, no compression, and a direct connection when the network allows it.",
+        description: "Move photos, videos and documents from your phone to your PC with a QR code. No account, no compression and no installation required to start.",
         og_title: "Transfer files from phone to PC wirelessly | AirDows",
         og_description: "Scan a QR code and move files in their original quality. No account or installation required to start.",
         header_logo_aria: "AirDows Home",
+        nav_how: "How it works",
+        nav_privacy: "Privacy",
+        nav_security: "Security",
         open_app: "Open AirDows",
         hero_badge: "iPhone, Android and Windows · No installation",
         hero_title: "Move files from your phone to your PC wirelessly.",
-        hero_desc: "Scan a QR code and transfer photos, videos and documents in their original quality. AirDows tries a direct connection and uses an encrypted relay when the network requires it.",
+        hero_desc: "Scan a QR code and transfer photos, videos and documents in their original quality. No WhatsApp detour and no upload-download cycle.",
         hero_btn: "Transfer now",
         trust_account: "No account",
         trust_install: "No installation to start",
@@ -255,7 +271,7 @@
         conn_active: "Active connection",
         qr_badge: "QR pairing",
         quality_badge: "Original quality",
-        route_badge: "Direct or encrypted relay",
+        route_badge: "Protected automatic route",
         video_desc: "Original quality to your PC",
         clipboard_sync: "Synced clipboard",
         copy: "Copy",
@@ -265,8 +281,8 @@
         section_desc: "Open AirDows on both devices, pair with a QR code and move the file. No WhatsApp compression and no upload-download detour.",
         feat1_title: "Keep the original quality",
         feat1_desc: "AirDows transfers the file without reducing its resolution or recompressing it.",
-        feat2_title: "Direct when possible",
-        feat2_desc: "WebRTC tries to connect your devices directly. If the network blocks it, an encrypted relay completes the transfer.",
+        feat2_title: "Protected connection",
+        feat2_desc: "AirDows tries to connect your devices directly. If that is not possible, it completes the transfer through a protected fallback route.",
         feat3_title: "Open, scan and transfer",
         feat3_desc: "You do not need an account or an installed application to get started.",
         drop_title: "Drop files here",
@@ -279,14 +295,17 @@
       },
       es: {
         title: "Pasar archivos del celular al PC sin cable | AirDows",
-        description: "Pasa fotos, videos y documentos del celular al PC con un QR. Sin cuenta, sin compresión y con conexión directa cuando la red lo permite.",
+        description: "Pasa fotos, videos y documentos del celular al PC con un QR. Sin cuenta, sin compresión y sin instalar para empezar.",
         og_title: "Pasa archivos del celular al PC sin cables | AirDows",
         og_description: "Escanea un QR y transfiere archivos en su calidad original. Sin cuenta y sin instalar para empezar.",
         header_logo_aria: "AirDows inicio",
+        nav_how: "Cómo funciona",
+        nav_privacy: "Privacidad",
+        nav_security: "Seguridad",
         open_app: "Abrir AirDows",
         hero_badge: "iPhone, Android y Windows · Sin instalar",
         hero_title: "Pasa archivos del celular al PC sin cables.",
-        hero_desc: "Escanea un QR y transfiere fotos, videos y documentos en su calidad original. AirDows intenta conectar tus dispositivos directamente y usa un relay cifrado cuando la red lo requiere.",
+        hero_desc: "Escanea un QR y transfiere fotos, videos y documentos en su calidad original. Sin mandártelos por WhatsApp ni subirlos para descargarlos otra vez.",
         hero_btn: "Transferir ahora",
         trust_account: "Sin cuenta",
         trust_install: "Sin instalar para empezar",
@@ -294,7 +313,7 @@
         conn_active: "Conexión activa",
         qr_badge: "Emparejamiento QR",
         quality_badge: "Calidad original",
-        route_badge: "Directa o relay cifrado",
+        route_badge: "Ruta automática protegida",
         video_desc: "Calidad original hacia tu PC",
         clipboard_sync: "Portapapeles sincronizado",
         copy: "Copiar",
@@ -304,8 +323,8 @@
         section_desc: "Abre AirDows en ambos dispositivos, empareja con un QR y mueve el archivo. Sin mandártelo por WhatsApp, sin comprimirlo y sin subirlo para descargarlo otra vez.",
         feat1_title: "Conserva la calidad original",
         feat1_desc: "AirDows transfiere el archivo sin reducir su resolución ni recomprimirlo.",
-        feat2_title: "Ruta directa cuando es posible",
-        feat2_desc: "WebRTC intenta conectar los dispositivos directamente. Si la red lo bloquea, usa un relay cifrado como respaldo.",
+        feat2_title: "Conexión protegida",
+        feat2_desc: "AirDows intenta conectar tus dispositivos de forma directa. Si no es posible, completa el envío por una ruta de respaldo protegida.",
         feat3_title: "Abre, escanea y transfiere",
         feat3_desc: "No necesitas crear una cuenta ni instalar una aplicación para comenzar.",
         drop_title: "Suelta tus archivos aquí",

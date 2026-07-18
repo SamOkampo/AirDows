@@ -691,6 +691,18 @@ app.post('/admin/alerts/test', requireAdminDashboard, async (req, res) => {
   return res.json(result);
 });
 
+const publicTrustPages = {
+  '/como-funciona': 'como-funciona.html',
+  '/privacidad': 'privacidad.html',
+  '/seguridad': 'seguridad.html'
+};
+
+Object.entries(publicTrustPages).forEach(([route, fileName]) => {
+  app.get(route, (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', fileName));
+  });
+});
+
 // REDIRECCIÓN FORZADA: Si el usuario escribe /app.html en la URL,
 // lo pateamos automáticamente a /app para limpiar el navegador.
 app.use((req, res, next) => {
@@ -700,6 +712,9 @@ app.use((req, res, next) => {
   if (req.path === '/app.html') {
     return res.redirect(301, `/app${req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : ''}`);
   }
+  const cleanTrustRoute = Object.entries(publicTrustPages)
+    .find(([, fileName]) => req.path === `/${fileName}`)?.[0];
+  if (cleanTrustRoute) return res.redirect(301, cleanTrustRoute);
   next();
 });
 

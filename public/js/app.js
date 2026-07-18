@@ -87,8 +87,34 @@ document.addEventListener('DOMContentLoaded', () => {
   let pendingServiceWorker = null;
   let pwaUpdateDeferred = false;
   let networkHealthSample = null;
+  let connectionEstablishedTracked = false;
+  let lastTrackedRoute = 'unknown';
 
   // --- HELPERS ---
+  function trackAnalytics(eventName, properties = {}) {
+    const sendEvent = () => {
+      if (!window.umami || typeof window.umami.track !== 'function') return false;
+      window.umami.track(eventName, properties);
+      return true;
+    };
+
+    if (sendEvent()) return;
+
+    const sendWhenLoaded = () => sendEvent();
+    if (document.readyState === 'complete') {
+      setTimeout(sendWhenLoaded, 0);
+    } else {
+      window.addEventListener('load', sendWhenLoaded, { once: true });
+    }
+  }
+
+  function getFileSizeBucket(bytes) {
+    if (bytes < 10 * 1024 * 1024) return 'under_10mb';
+    if (bytes < 100 * 1024 * 1024) return '10mb_100mb';
+    if (bytes < 1024 * 1024 * 1024) return '100mb_1gb';
+    return 'over_1gb';
+  }
+
   function translate(key) {
     return typeof t === 'function' ? t(key) : key;
   }
@@ -294,12 +320,14 @@ document.addEventListener('DOMContentLoaded', () => {
       event.preventDefault();
       deferredInstallPrompt = event;
       btnInstallApp.classList.remove('hidden');
+      trackAnalytics('pwa_prompt_shown');
     });
 
     window.addEventListener('appinstalled', () => {
       deferredInstallPrompt = null;
       btnInstallApp.classList.add('hidden');
       showToast('AirDows se instaló correctamente.');
+      trackAnalytics('pwa_installed');
     });
 
     btnInstallApp.addEventListener('click', async () => {
@@ -401,6 +429,12 @@ document.addEventListener('DOMContentLoaded', () => {
   function enqueueFiles(files) {
     const selectedFiles = Array.from(files || []);
     if (!selectedFiles.length) return;
+
+    const largestFileSize = Math.max(...selectedFiles.map(file => file.size));
+    trackAnalytics('file_queued', {
+      file_count: Math.min(selectedFiles.length, 10),
+      size_bucket: getFileSizeBucket(largestFileSize)
+    });
 
     selectedFiles.forEach((file) => {
       transferQueue.push({
@@ -583,6 +617,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   socketManager.onCodeGenerated = (code) => {
     roomCode = code;
+    trackAnalytics('room_created');
     
     // Display 4 digits
     d1.textContent = code[0];
@@ -609,6 +644,8 @@ document.addEventListener('DOMContentLoaded', () => {
     setPetState('connecting');
     roomCode = code;
     p2pConnected = false;
+    connectionEstablishedTracked = false;
+    trackAnalytics('room_joined', { role });
 
     
     switchView('transfer');
@@ -675,6 +712,10 @@ document.addEventListener('DOMContentLoaded', () => {
         reconnectTimer = null;
       }
       connectionStatusText.textContent = translate('p2p_active');
+      if (!connectionEstablishedTracked) {
+        connectionEstablishedTracked = true;
+        trackAnalytics('connection_established');
+      }
       processQueue();
     } else if ((state === 'failed' || state === 'disconnected') && roomCode) {
       p2pConnected = false;
@@ -716,6 +757,12 @@ document.addEventListener('DOMContentLoaded', () => {
     acquireTransferWakeLock();
     setNativeTransferKeepAlive(true);
     beginNetworkHealthSample(isSending, options);
+    lastTrackedRoute = 'unknown';
+    trackAnalytics('transfer_started', {
+      direction: isSending ? 'send' : 'receive',
+      size_bucket: getFileSizeBucket(totalBytes),
+      mode: options.writeMode || 'unknown'
+    });
     updateConnectionHealth({ connectionType: 'unknown', speed: 0 });
     setPetState('transferring');
     dropZone.classList.add('hidden');
@@ -770,6 +817,13 @@ document.addEventListener('DOMContentLoaded', () => {
       networkHealthSample.relayChunks = Math.max(networkHealthSample.relayChunks, options.relayChunks || 0);
       networkHealthSample.relayChunkSize = options.relayChunkSize || networkHealthSample.relayChunkSize;
     }
+    const completedDirection = fileBlob || options.savedToDisk ? 'receive' : 'send';
+    const completedRoute = networkHealthSample?.route || options.connectionType || 'unknown';
+    trackAnalytics('transfer_completed', {
+      direction: completedDirection,
+      route: completedRoute,
+      size_bucket: getFileSizeBucket(currentFileTransferSize)
+    });
     recordNetworkHealth('completed');
     applyPendingPwaUpdate();
     setPetState('idle');
@@ -822,6 +876,11 @@ document.addEventListener('DOMContentLoaded', () => {
       networkHealthSample.route = metrics.connectionType || 'unknown';
       networkHealthSample.peakSpeed = Math.max(networkHealthSample.peakSpeed, metrics.speed || 0);
     }
+    const route = metrics.connectionType || 'unknown';
+    if (route !== 'unknown' && route !== lastTrackedRoute) {
+      lastTrackedRoute = route;
+      trackAnalytics('route_selected', { route });
+    }
     const isTurboMode = activeTransferMode === 'disk' || activeTransferMode === 'send';
     setPetState(isTurboMode && metrics.speed >= 10 * 1024 * 1024 ? 'turbo' : 'transferring');
   };
@@ -832,11 +891,16 @@ document.addEventListener('DOMContentLoaded', () => {
     networkHealthSample.relayChunkSize = chunkSize;
   };
 
-  webrtcManager.onTransferError = () => {
+  webrtcManager.onTransferError = (details = {}) => {
     activeTransferMode = 'idle';
     transferIsActive = false;
     releaseTransferWakeLock();
     setNativeTransferKeepAlive(false);
+    trackAnalytics('transfer_failed', {
+      direction: networkHealthSample?.direction || 'unknown',
+      route: networkHealthSample?.route || 'unknown',
+      failure_type: ['write', 'relay-budget', 'network', 'protocol'].includes(details.type) ? details.type : 'other'
+    });
     recordNetworkHealth('failed');
     applyPendingPwaUpdate();
     setPetState('error');
@@ -847,6 +911,10 @@ document.addEventListener('DOMContentLoaded', () => {
     transferIsActive = false;
     releaseTransferWakeLock();
     setNativeTransferKeepAlive(false);
+    trackAnalytics('transfer_cancelled', {
+      direction: networkHealthSample?.direction || 'unknown',
+      initiated_by: isLocal ? 'local' : 'remote'
+    });
     recordNetworkHealth('cancelled');
     applyPendingPwaUpdate();
     setPetState('idle');
@@ -982,6 +1050,8 @@ document.addEventListener('DOMContentLoaded', () => {
     socketManager.leaveRoom();
     webrtcManager.close();
     roomCode = null;
+    connectionEstablishedTracked = false;
+    lastTrackedRoute = 'unknown';
     pendingPairing = null;
     lastProgressRenderTime = 0;
     transferQueue = [];
@@ -1022,6 +1092,9 @@ document.addEventListener('DOMContentLoaded', () => {
       console.info('Runtime configuration bootstrap failed:', error.message);
     }
 
+    trackAnalytics('app_open', {
+      entry: new URLSearchParams(window.location.search).has('code') ? 'pairing_link' : 'direct'
+    });
     socketManager.connect();
     restoreSharedFiles();
     registerServiceWorker();
