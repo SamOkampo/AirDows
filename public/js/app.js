@@ -40,6 +40,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const progressPercent = document.getElementById('progress-percent');
   const networkDiagnostics = document.getElementById('network-diagnostics');
   const diagnosticMode = document.getElementById('diagnostic-mode');
+  const connectionHealth = document.getElementById('connection-health');
+  const connectionHealthTitle = document.getElementById('connection-health-title');
+  const connectionHealthHint = document.getElementById('connection-health-hint');
   const btnCancelTransfer = document.getElementById('btn-cancel-transfer');
   const queueContainer = document.getElementById('queue-container');
   const queueSummary = document.getElementById('queue-summary');
@@ -83,6 +86,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let deferredInstallPrompt = null;
   let pendingServiceWorker = null;
   let pwaUpdateDeferred = false;
+  let networkHealthSample = null;
 
   // --- HELPERS ---
   function translate(key) {
@@ -139,6 +143,64 @@ document.addEventListener('DOMContentLoaded', () => {
       : baseLabel;
   }
 
+  function getNetworkHealthPresentation(metrics) {
+    const isSlow = metrics.speed > 0 && metrics.speed < 512 * 1024;
+    if (isSlow) {
+      return { tone: 'warning', title: 'health_slow_title', hint: 'health_slow_hint' };
+    }
+    if (metrics.connectionType === 'relay') {
+      return { tone: 'warning', title: 'health_relay_title', hint: 'health_relay_hint' };
+    }
+    if (metrics.connectionType === 'host' || metrics.connectionType === 'srflx') {
+      return { tone: 'good', title: 'health_direct_title', hint: 'health_direct_hint' };
+    }
+    return { tone: 'neutral', title: 'health_unknown_title', hint: 'health_unknown_hint' };
+  }
+
+  function updateConnectionHealth(metrics) {
+    if (!connectionHealth || !connectionHealthTitle || !connectionHealthHint) return;
+    const presentation = getNetworkHealthPresentation(metrics);
+    connectionHealth.className = `connection-health tone-${presentation.tone}`;
+    connectionHealthTitle.textContent = translate(presentation.title);
+    connectionHealthHint.textContent = translate(presentation.hint);
+  }
+
+  function getSpeedBucket(speed) {
+    if (!speed) return 'unknown';
+    if (speed < 512 * 1024) return 'slow';
+    if (speed < 3 * 1024 * 1024) return 'moderate';
+    if (speed < 10 * 1024 * 1024) return 'fast';
+    return 'turbo';
+  }
+
+  function getDurationBucket(durationMs) {
+    if (!durationMs) return 'unknown';
+    if (durationMs < 30 * 1000) return 'short';
+    if (durationMs < 2 * 60 * 1000) return 'medium';
+    return 'long';
+  }
+
+  function beginNetworkHealthSample(isSending) {
+    networkHealthSample = {
+      startedAt: Date.now(),
+      route: 'unknown',
+      peakSpeed: 0,
+      direction: isSending ? 'send' : 'receive'
+    };
+  }
+
+  function recordNetworkHealth(outcome) {
+    if (!networkHealthSample) return;
+
+    socketManager.sendNetworkHealth({
+      route: networkHealthSample.route,
+      outcome,
+      speed: getSpeedBucket(networkHealthSample.peakSpeed),
+      duration: getDurationBucket(Date.now() - networkHealthSample.startedAt)
+    });
+    networkHealthSample = null;
+  }
+
   async function acquireTransferWakeLock() {
     if (!('wakeLock' in navigator) || wakeLock) return;
 
@@ -161,6 +223,18 @@ document.addEventListener('DOMContentLoaded', () => {
     } finally {
       wakeLock = null;
     }
+  }
+
+  function setNativeTransferKeepAlive(active) {
+    const plugin = window.Capacitor?.Plugins?.AirDowsTransfer;
+    if (!window.AirDowsRuntime?.isNative || !plugin) return;
+
+    const operation = active ? plugin.start : plugin.stop;
+    if (typeof operation !== 'function') return;
+
+    operation.call(plugin).catch((error) => {
+      console.info('Native transfer keep-alive unavailable:', error.message);
+    });
   }
 
   function canApplyPwaUpdate() {
@@ -623,6 +697,9 @@ document.addEventListener('DOMContentLoaded', () => {
     activeTransferMode = options.writeMode || 'send';
     transferIsActive = true;
     acquireTransferWakeLock();
+    setNativeTransferKeepAlive(true);
+    beginNetworkHealthSample(isSending);
+    updateConnectionHealth({ connectionType: 'unknown', speed: 0 });
     setPetState('transferring');
     dropZone.classList.add('hidden');
     completedCard.classList.add('hidden');
@@ -671,6 +748,8 @@ document.addEventListener('DOMContentLoaded', () => {
     activeTransferMode = 'idle';
     transferIsActive = false;
     releaseTransferWakeLock();
+    setNativeTransferKeepAlive(false);
+    recordNetworkHealth('completed');
     applyPendingPwaUpdate();
     setPetState('idle');
     progressCard.classList.add('hidden');
@@ -717,6 +796,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
   webrtcManager.onNetworkDiagnostics = (metrics) => {
     networkDiagnostics.classList.remove('hidden');
+    updateConnectionHealth(metrics);
+    if (networkHealthSample) {
+      networkHealthSample.route = metrics.connectionType || 'unknown';
+      networkHealthSample.peakSpeed = Math.max(networkHealthSample.peakSpeed, metrics.speed || 0);
+    }
     const isTurboMode = activeTransferMode === 'disk' || activeTransferMode === 'send';
     setPetState(isTurboMode && metrics.speed >= 10 * 1024 * 1024 ? 'turbo' : 'transferring');
   };
@@ -725,6 +809,8 @@ document.addEventListener('DOMContentLoaded', () => {
     activeTransferMode = 'idle';
     transferIsActive = false;
     releaseTransferWakeLock();
+    setNativeTransferKeepAlive(false);
+    recordNetworkHealth('failed');
     applyPendingPwaUpdate();
     setPetState('error');
   };
@@ -733,6 +819,8 @@ document.addEventListener('DOMContentLoaded', () => {
     activeTransferMode = 'idle';
     transferIsActive = false;
     releaseTransferWakeLock();
+    setNativeTransferKeepAlive(false);
+    recordNetworkHealth('cancelled');
     applyPendingPwaUpdate();
     setPetState('idle');
     progressCard.classList.add('hidden');
@@ -859,6 +947,8 @@ document.addEventListener('DOMContentLoaded', () => {
     p2pConnected = false;
     transferIsActive = false;
     releaseTransferWakeLock();
+    setNativeTransferKeepAlive(false);
+    recordNetworkHealth('cancelled');
     if (activeQueueItem) {
       webrtcManager.cancelActiveTransfer();
     }
@@ -898,10 +988,19 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // --- INITIATE CONNECTION ---
-  socketManager.connect();
-  restoreSharedFiles();
-  registerServiceWorker();
-  setupInstallPrompt();
+  async function bootstrapApplication() {
+    try {
+      await (window.AirDowsRuntime?.ready || Promise.resolve());
+    } catch (error) {
+      console.info('Runtime configuration bootstrap failed:', error.message);
+    }
+
+    socketManager.connect();
+    restoreSharedFiles();
+    registerServiceWorker();
+    setupInstallPrompt();
+    autoJoinFromUrl();
+  }
 
   window.addEventListener('offline', () => {
     showToast('Sin conexión. La transferencia se reanudará cuando vuelva la red.');
@@ -917,18 +1016,18 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
+  function autoJoinFromUrl() {
+    const urlParams = new URLSearchParams(window.location.search);
+    const codeParam = urlParams.get('code');
+    if (!codeParam || codeParam.length !== 4) return;
 
-  // --- CHECK URL QUERY PARAMS FOR QR AUTO-JOIN ---
-  const urlParams = new URLSearchParams(window.location.search);
-  const codeParam = urlParams.get('code');
-  if (codeParam && codeParam.length === 4) {
     console.log('Found query parameter code:', codeParam);
     joinCodeInput.value = codeParam;
-    // Small timeout to allow socket connection to finish before joining
     setTimeout(() => {
       socketManager.joinCode(codeParam);
-      // Clean query string from browser bar to keep it tidy
       window.history.replaceState({}, document.title, window.location.pathname);
     }, 500);
   }
+
+  bootstrapApplication();
 });

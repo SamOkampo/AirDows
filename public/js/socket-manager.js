@@ -14,8 +14,22 @@ class SocketManager {
   }
 
   connect() {
-    // io() automatically connects to the window.location host
-    this.socket = io();
+    const runtime = window.AirDowsRuntime;
+    const signalingUrl = runtime?.getSignalingUrl?.() || '';
+
+    if (runtime?.isNative && !signalingUrl) {
+      const message = 'La app nativa necesita AIRDOWS_SIGNALING_URL para conectarse al servidor.';
+      console.error(message);
+      if (this.onError) this.onError(message);
+      return;
+    }
+
+    // The browser uses its current origin; the native shell uses the configured HTTPS backend.
+    this.socket = io(signalingUrl || undefined, {
+      transports: ['websocket', 'polling'],
+      timeout: 10000,
+      reconnection: true
+    });
 
     this.socket.on('connect', () => {
       console.log('Connected to signaling server:', this.socket.id);
@@ -91,6 +105,12 @@ class SocketManager {
   leaveRoom() {
     if (this.socket && this.socket.connected) {
       this.socket.emit('leave-room');
+    }
+  }
+
+  sendNetworkHealth(payload) {
+    if (this.socket && this.socket.connected) {
+      this.socket.emit('network-health', payload);
     }
   }
 }

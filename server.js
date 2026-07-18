@@ -29,6 +29,8 @@ const ROOM_EXPIRATION_MS = 180000;
 const JOIN_ATTEMPT_WINDOW_MS = 60 * 1000;
 const MAX_JOIN_ATTEMPTS = 5;
 const ICE_CONFIG_CACHE_MS = 10 * 60 * 1000;
+const NETWORK_HEALTH_WINDOW_MS = 60 * 1000;
+const MAX_NETWORK_HEALTH_EVENTS = 12;
 
 let cachedIceConfig = null;
 let cachedIceConfigExpiresAt = 0;
@@ -140,6 +142,44 @@ async function getIceConfig() {
 
 // Store active rooms and their occupants
 const activeRooms = new Map();
+const networkHealthStats = {
+  samples: 0,
+  byRoute: Object.create(null),
+  byOutcome: Object.create(null),
+  bySpeed: Object.create(null),
+  byDuration: Object.create(null)
+};
+
+function incrementMetric(bucket, key) {
+  bucket[key] = (bucket[key] || 0) + 1;
+}
+
+function normalizeNetworkHealth(payload) {
+  const routes = new Set(['host', 'srflx', 'relay', 'unknown']);
+  const outcomes = new Set(['completed', 'cancelled', 'failed']);
+  const speedBuckets = new Set(['slow', 'moderate', 'fast', 'turbo', 'unknown']);
+  const durationBuckets = new Set(['short', 'medium', 'long', 'unknown']);
+
+  return {
+    route: routes.has(payload.route) ? payload.route : 'unknown',
+    outcome: outcomes.has(payload.outcome) ? payload.outcome : 'failed',
+    speed: speedBuckets.has(payload.speed) ? payload.speed : 'unknown',
+    duration: durationBuckets.has(payload.duration) ? payload.duration : 'unknown'
+  };
+}
+
+function recordNetworkHealth(payload) {
+  const metric = normalizeNetworkHealth(payload);
+  networkHealthStats.samples += 1;
+  incrementMetric(networkHealthStats.byRoute, metric.route);
+  incrementMetric(networkHealthStats.byOutcome, metric.outcome);
+  incrementMetric(networkHealthStats.bySpeed, metric.speed);
+  incrementMetric(networkHealthStats.byDuration, metric.duration);
+
+  if (networkHealthStats.samples % 25 === 0) {
+    console.info('[AirDows] Network health aggregate', networkHealthStats);
+  }
+}
 
 // Helper to generate a unique 4-digit code
 function generateUniqueCode() {
@@ -162,6 +202,21 @@ io.on('connection', (socket) => {
         iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
       });
     }
+  });
+
+  // Aggregate-only reliability telemetry. No names, file sizes, IPs, room codes, or socket IDs are retained.
+  socket.on('network-health', (payload = {}) => {
+    const now = Date.now();
+    const events = socket.data.networkHealthEvents || { count: 0, startedAt: now };
+    if (now - events.startedAt > NETWORK_HEALTH_WINDOW_MS) {
+      events.count = 0;
+      events.startedAt = now;
+    }
+    if (events.count >= MAX_NETWORK_HEALTH_EVENTS) return;
+
+    events.count += 1;
+    socket.data.networkHealthEvents = events;
+    recordNetworkHealth(payload);
   });
 
   // 1. Generate a new pairing code

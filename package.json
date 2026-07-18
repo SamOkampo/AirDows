@@ -4,7 +4,10 @@
   "description": "An AirDrop clone using Node.js, Socket.io, and WebRTC for direct file sharing.",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "native:sync": "npx cap sync android",
+    "native:open": "npx cap open android",
+    "native:run": "npx cap run android"
   },
   "dependencies": {
     "@capacitor/android": "^8.4.2",
@@ -15,6 +18,7 @@
     "socket.io": "^4.7.5"
   },
   "devDependencies": {
-    "@capacitor/cli": "^8.4.2"
+    "@capacitor/cli": "^8.4.2",
+    "typescript": "^5.9.3"
   }
 }

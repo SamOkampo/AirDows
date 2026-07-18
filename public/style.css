@@ -771,6 +771,59 @@ body {
   width: 7px;
 }
 
+.connection-health {
+  align-items: flex-start;
+  background: rgba(255, 255, 255, 0.025);
+  border-left: 2px solid rgba(148, 163, 184, 0.55);
+  display: grid;
+  gap: 10px;
+  grid-template-columns: auto minmax(0, 1fr);
+  padding: 9px 10px;
+}
+
+.connection-health-dot {
+  background: #94a3b8;
+  border-radius: 50%;
+  height: 8px;
+  margin-top: 5px;
+  width: 8px;
+}
+
+.connection-health strong,
+.connection-health span:last-child {
+  display: block;
+}
+
+.connection-health strong {
+  color: var(--text-primary);
+  font-size: 0.78rem;
+  font-weight: 750;
+}
+
+.connection-health span:last-child {
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  line-height: 1.4;
+  margin-top: 2px;
+}
+
+.connection-health.tone-good {
+  border-left-color: var(--color-success);
+}
+
+.connection-health.tone-good .connection-health-dot {
+  background: var(--color-success);
+  box-shadow: 0 0 10px rgba(52, 211, 153, 0.6);
+}
+
+.connection-health.tone-warning {
+  border-left-color: #fbbf24;
+}
+
+.connection-health.tone-warning .connection-health-dot {
+  background: #fbbf24;
+}
+
 .diagnostic-grid {
   display: grid;
   gap: 10px;
