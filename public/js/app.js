@@ -23,7 +23,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const connectionStatusText = document.getElementById('connection-status-text');
   const btnDisconnect = document.getElementById('btn-disconnect');
   const airPet = document.getElementById('air-pet');
-  const localAiToggle = document.getElementById('local-ai-toggle');
   const dropZone = document.getElementById('drop-zone');
   const fileInput = document.getElementById('file-input');
   const clipboardTextInput = document.getElementById('clipboard-text-input');
@@ -829,16 +828,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  if (localAiManager && localAiToggle) {
-    localAiToggle.checked = localAiManager.enabled;
-    localAiToggle.addEventListener('change', () => {
-      localAiManager.setEnabled(localAiToggle.checked);
-      transferQueue.forEach((item) => {
-        item.insight = localAiManager.analyzeFile(item.file);
-      });
-      renderQueue();
-    });
-  }
 
   // --- CHECK URL QUERY PARAMS FOR QR AUTO-JOIN ---
   const urlParams = new URLSearchParams(window.location.search);

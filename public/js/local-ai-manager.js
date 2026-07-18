@@ -1,17 +1,9 @@
 class LocalAIManager {
   constructor() {
-    this.storageKey = 'airdows.local-ai.enabled';
-    this.enabled = localStorage.getItem(this.storageKey) !== 'false';
-  }
-
-  setEnabled(enabled) {
-    this.enabled = Boolean(enabled);
-    localStorage.setItem(this.storageKey, String(this.enabled));
+    this.enabled = true;
   }
 
   analyzeFile(file) {
-    if (!this.enabled) return null;
-
     const name = String(file.name || 'archivo');
     const extension = name.includes('.') ? name.split('.').pop().toLowerCase() : '';
     const type = String(file.type || '');

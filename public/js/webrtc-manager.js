@@ -877,10 +877,10 @@ class WebRTCManager {
     let label = 'Directa veloz';
 
     if (connection.connectionType === 'relay') {
-      chunkSize = this.FALLBACK_CHUNK_SIZE;
-      bufferThreshold = 4 * 1024 * 1024;
-      lowThreshold = 1 * 1024 * 1024;
-      label = 'Relay estable';
+      chunkSize = mobile ? this.FALLBACK_CHUNK_SIZE : this.CHUNK_SIZE;
+      bufferThreshold = 8 * 1024 * 1024;
+      lowThreshold = 2 * 1024 * 1024;
+      label = 'Relay optimizado';
     } else if (connection.connectionType === 'srflx') {
       chunkSize = mobile ? this.FALLBACK_CHUNK_SIZE : this.CHUNK_SIZE;
       bufferThreshold = 8 * 1024 * 1024;
