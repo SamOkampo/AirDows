@@ -13,6 +13,8 @@ if (typeof process.loadEnvFile === 'function') {
   }
 }
 
+const { MetricsStore } = require('./metrics-store');
+
 const app = express();
 // The production host sits behind a reverse proxy and forwards the client IP.
 app.set('trust proxy', 1);
@@ -37,6 +39,7 @@ const FREE_RELAY_BUDGET_BYTES = Math.max(
 );
 const MAX_RELAY_USAGE_REPORT_BYTES = 8 * 1024 * 1024;
 const ADMIN_DASHBOARD_TOKEN = process.env.ADMIN_DASHBOARD_TOKEN || '';
+const METRICS_DATABASE_URL = process.env.METRICS_DATABASE_URL || process.env.DATABASE_URL || '';
 
 let cachedIceConfig = null;
 let cachedIceConfigExpiresAt = 0;
@@ -148,6 +151,7 @@ async function getIceConfig() {
 
 // Store active rooms and their occupants
 const activeRooms = new Map();
+const metricsStore = new MetricsStore(METRICS_DATABASE_URL);
 const networkHealthStats = {
   samples: 0,
   byRoute: Object.create(null),
@@ -197,10 +201,26 @@ function recordNetworkHealth(payload) {
   incrementMetric(networkHealthStats.byDuration, metric.duration);
 
   // Only the sending peer reports chunks, preventing receiver-side double counting.
-  if (metric.route === 'relay' && metric.direction === 'send') {
+  const relayEstimatedBytes = metric.route === 'relay' && metric.direction === 'send'
+    ? metric.relayChunks * metric.relayChunkSize
+    : 0;
+  if (relayEstimatedBytes > 0) {
     networkHealthStats.relayChunks += metric.relayChunks;
-    networkHealthStats.relayEstimatedBytes += metric.relayChunks * metric.relayChunkSize;
+    networkHealthStats.relayEstimatedBytes += relayEstimatedBytes;
   }
+
+  metricsStore.record({
+    samples: 1,
+    completed: metric.outcome === 'completed' ? 1 : 0,
+    failed: metric.outcome === 'failed' ? 1 : 0,
+    cancelled: metric.outcome === 'cancelled' ? 1 : 0,
+    host: metric.route === 'host' ? 1 : 0,
+    srflx: metric.route === 'srflx' ? 1 : 0,
+    relay: metric.route === 'relay' ? 1 : 0,
+    unknownRoute: metric.route === 'unknown' ? 1 : 0,
+    relayChunks: relayEstimatedBytes > 0 ? metric.relayChunks : 0,
+    relayEstimatedBytes
+  });
 
   if (networkHealthStats.samples % 25 === 0) {
     console.info('[AirDows] Network health aggregate', networkHealthStats);
@@ -224,6 +244,7 @@ function emitProRequired(socket) {
 
   budget.blocked = true;
   networkHealthStats.proRequiredEvents += 1;
+  metricsStore.record({ proRequiredEvents: 1 });
   socket.emit('pro-required', {
     code: 'PRO_REQUIRED',
     plan: 'free',
@@ -232,21 +253,40 @@ function emitProRequired(socket) {
   });
 }
 
-function buildDashboardMetrics() {
-  const outcomes = networkHealthStats.byOutcome;
-  const routes = networkHealthStats.byRoute;
-  const completed = outcomes.completed || 0;
-  const failed = outcomes.failed || 0;
+function getSessionMetricTotals() {
+  return {
+    samples: networkHealthStats.samples,
+    completed: networkHealthStats.byOutcome.completed || 0,
+    failed: networkHealthStats.byOutcome.failed || 0,
+    cancelled: networkHealthStats.byOutcome.cancelled || 0,
+    host: networkHealthStats.byRoute.host || 0,
+    srflx: networkHealthStats.byRoute.srflx || 0,
+    relay: networkHealthStats.byRoute.relay || 0,
+    unknownRoute: networkHealthStats.byRoute.unknown || 0,
+    relayChunks: networkHealthStats.relayChunks,
+    relayEstimatedBytes: networkHealthStats.relayEstimatedBytes,
+    proRequiredEvents: networkHealthStats.proRequiredEvents,
+    startedAt: networkHealthStats.startedAt
+  };
+}
+
+function formatDashboardMetrics(totals, persistenceEnabled) {
+  const completed = totals.completed;
+  const failed = totals.failed;
   const resolvedTransfers = completed + failed;
-  const routeSamples = Math.max(networkHealthStats.samples, 1);
-  const host = routes.host || 0;
-  const srflx = routes.srflx || 0;
-  const relay = routes.relay || 0;
+  const routeSamples = Math.max(totals.samples, 1);
+  const host = totals.host;
+  const srflx = totals.srflx;
+  const relay = totals.relay;
 
   return {
     generatedAt: new Date().toISOString(),
-    startedAt: networkHealthStats.startedAt,
-    samples: networkHealthStats.samples,
+    startedAt: totals.startedAt,
+    samples: totals.samples,
+    persistence: {
+      enabled: persistenceEnabled,
+      label: persistenceEnabled ? 'Histórico persistente' : 'Sesión actual (sin base de datos)'
+    },
     transferSuccess: {
       completed,
       failed,
@@ -261,12 +301,17 @@ function buildDashboardMetrics() {
       relayPercent: Number(((relay / routeSamples) * 100).toFixed(1))
     },
     relay: {
-      chunks: networkHealthStats.relayChunks,
-      estimatedGiB: Number((networkHealthStats.relayEstimatedBytes / (1024 ** 3)).toFixed(3)),
+      chunks: totals.relayChunks,
+      estimatedGiB: Number((totals.relayEstimatedBytes / (1024 ** 3)).toFixed(3)),
       freeBudgetMiB: Number((FREE_RELAY_BUDGET_BYTES / (1024 ** 2)).toFixed(0)),
-      proRequiredEvents: networkHealthStats.proRequiredEvents
+      proRequiredEvents: totals.proRequiredEvents
     }
   };
+}
+
+async function buildDashboardMetrics() {
+  const persistedTotals = await metricsStore.getTotals();
+  return formatDashboardMetrics(persistedTotals || getSessionMetricTotals(), Boolean(persistedTotals));
 }
 
 function timingSafeTokenMatch(expected, received) {
@@ -543,9 +588,9 @@ app.get('/admin/dashboard', requireAdminDashboard, (req, res) => {
   res.sendFile(path.join(__dirname, 'private', 'admin-dashboard.html'));
 });
 
-app.get('/admin/metrics', requireAdminDashboard, (req, res) => {
+app.get('/admin/metrics', requireAdminDashboard, async (req, res) => {
   res.set('Cache-Control', 'no-store');
-  res.json(buildDashboardMetrics());
+  res.json(await buildDashboardMetrics());
 });
 
 // REDIRECCIÓN FORZADA: Si el usuario escribe /app.html en la URL,
@@ -569,7 +614,23 @@ app.get('/app', (req, res) => {
 app.use(express.static(path.join(__dirname, 'public')));
 
 // 3. ENCENDER EL SERVIDOR (Siempre al final)
-server.listen(PORT, '0.0.0.0', () => {
-  console.log(`Signaling server running on http://localhost:${PORT}`);
-  console.log(`Local network access via http://<YOUR_LOCAL_IP>:${PORT}`);
+async function startServer() {
+  await metricsStore.initialize();
+  server.listen(PORT, '0.0.0.0', () => {
+    console.log(`Signaling server running on http://localhost:${PORT}`);
+    console.log(`Local network access via http://<YOUR_LOCAL_IP>:${PORT}`);
+  });
+}
+
+async function shutdown() {
+  await metricsStore.close();
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(0), 5000).unref();
+}
+
+process.once('SIGTERM', shutdown);
+process.once('SIGINT', shutdown);
+startServer().catch((error) => {
+  console.error('Failed to start AirDows:', error);
+  process.exit(1);
 });

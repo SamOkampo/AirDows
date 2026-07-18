@@ -62,11 +62,17 @@ define estas variables de entorno:
 ```bash
 ADMIN_DASHBOARD_TOKEN=<token-largo-y-aleatorio>
 FREE_RELAY_BUDGET_BYTES=262144000
+METRICS_DATABASE_URL=postgresql://usuario:contraseña@host:5432/base
+METRICS_DATABASE_SSL=true
 ```
 
 Ábrelo con autenticación HTTP Basic: usuario `admin` y como contraseña el valor de
 `ADMIN_DASHBOARD_TOKEN`. El presupuesto indicado equivale a 250 MiB por sesión gratuita
 que use relay TURN; al agotarse, el cliente recibe `PRO_REQUIRED`.
+
+`METRICS_DATABASE_URL` es opcional. Al configurarlo, AirDows crea automáticamente una tabla
+diaria con métricas agregadas y el panel conserva su historial tras reinicios de Railway.
+Usa `METRICS_DATABASE_SSL=true` para una base de datos externa como Supabase o Neon.
 
 ---
 

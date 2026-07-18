@@ -47,7 +47,7 @@
     <div class="metrics">
       <article class="metric"><span>Éxito</span><strong id="success-rate">0%</strong><small id="success-detail">0 completadas</small></article>
       <article class="metric"><span>Relay estimado</span><strong id="relay-gib">0 GiB</strong><small id="relay-chunks">0 chunks relay</small></article>
-      <article class="metric"><span>Muestras</span><strong id="samples">0</strong><small>sesión actual del servidor</small></article>
+      <article class="metric"><span>Muestras</span><strong id="samples">0</strong><small id="metrics-scope">sesión actual del servidor</small></article>
       <article class="metric"><span>Bloqueos Free</span><strong id="pro-required">0</strong><small id="free-budget">0 MiB por sesión</small></article>
     </div>
 
@@ -82,6 +82,7 @@
       setText('relay-gib', `${relay.estimatedGiB.toFixed(3)} GiB`);
       setText('relay-chunks', `${relay.chunks.toLocaleString('es-CO')} chunks relay`);
       setText('samples', metrics.samples.toLocaleString('es-CO'));
+      setText('metrics-scope', metrics.persistence?.label || 'Sesión actual del servidor');
       setText('pro-required', relay.proRequiredEvents.toLocaleString('es-CO'));
       setText('free-budget', `${relay.freeBudgetMiB.toLocaleString('es-CO')} MiB por sesión`);
       setText('updated-at', `Actualizado ${new Date(metrics.generatedAt).toLocaleTimeString('es-CO')}`);
