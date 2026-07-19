@@ -55,16 +55,19 @@
 }
 
 .product-visual {
-  margin: 42px 0 0;
+  width: 100%;
+  max-width: 900px;
+  margin: 48px auto 0;
 }
 
 .product-visual img {
   display: block;
   width: 100%;
-  aspect-ratio: 1200 / 630;
+  height: auto;
   border: 1px solid var(--line);
   border-radius: 8px;
-  object-fit: cover;
+  object-fit: contain;
+  object-position: center;
 }
 
 .product-visual figcaption {
@@ -301,6 +304,7 @@
   }
 
   .product-visual {
+    max-width: 100%;
     margin-top: 32px;
   }
 
