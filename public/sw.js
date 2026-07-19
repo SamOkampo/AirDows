@@ -1,4 +1,4 @@
-const CACHE_NAME = 'airdows-shell-v11';
+const CACHE_NAME = 'airdows-shell-v12';
 const APP_SHELL = [
   '/',
   '/app',
@@ -8,6 +8,7 @@ const APP_SHELL = [
   '/assets/icon-192.png',
   '/assets/icon-512.png',
   '/assets/favicon.png',
+  '/assets/airdows-flow-background.webp',
   '/socket.io/socket.io.js',
   '/js/app.js',
   '/js/socket-manager.js',

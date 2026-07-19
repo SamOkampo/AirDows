@@ -226,8 +226,78 @@
       }
     }
 
+    function setupLuxuryMotion() {
+      const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      const revealTargets = document.querySelectorAll([
+        ".hero-copy > *",
+        ".transfer-tool",
+        ".tool-note",
+        ".manifesto > *",
+        ".section-heading > *",
+        ".feature",
+        ".process-step",
+        ".guide-link",
+        ".faq-list details",
+        ".final-cta > *",
+        ".footer-inner"
+      ].join(","));
+
+      revealTargets.forEach((element, index) => {
+        element.setAttribute("data-reveal", "");
+        element.style.setProperty("--reveal-delay", `${(index % 3) * 75}ms`);
+      });
+      document.documentElement.classList.add("motion-ready");
+
+      if (reduceMotion || !("IntersectionObserver" in window)) {
+        revealTargets.forEach((element) => element.classList.add("is-visible"));
+        return;
+      }
+
+      const revealObserver = new IntersectionObserver((entries, observer) => {
+        entries.forEach((entry) => {
+          if (!entry.isIntersecting) return;
+          entry.target.classList.add("is-visible");
+          observer.unobserve(entry.target);
+        });
+      }, { threshold: 0.1, rootMargin: "0px 0px -8%" });
+      revealTargets.forEach((element) => revealObserver.observe(element));
+
+      let scrollFrame = 0;
+      window.addEventListener("scroll", () => {
+        if (scrollFrame) return;
+        scrollFrame = requestAnimationFrame(() => {
+          const shift = Math.max(-36, window.scrollY * -0.022);
+          document.body.style.setProperty("--background-shift", `${shift}px`);
+          scrollFrame = 0;
+        });
+      }, { passive: true });
+
+      const transferTool = document.querySelector(".transfer-tool");
+      if (!transferTool || !window.matchMedia("(pointer: fine)").matches) return;
+
+      let tiltFrame = 0;
+      let pointerX = 0;
+      let pointerY = 0;
+      transferTool.addEventListener("pointermove", (event) => {
+        const bounds = transferTool.getBoundingClientRect();
+        pointerX = ((event.clientX - bounds.left) / bounds.width - 0.5) * 2;
+        pointerY = ((event.clientY - bounds.top) / bounds.height - 0.5) * 2;
+        if (tiltFrame) return;
+        tiltFrame = requestAnimationFrame(() => {
+          transferTool.style.setProperty("--tilt-x", `${pointerY * -1.2}deg`);
+          transferTool.style.setProperty("--tilt-y", `${pointerX * 1.5}deg`);
+          tiltFrame = 0;
+        });
+      });
+      transferTool.addEventListener("pointerleave", () => {
+        transferTool.style.setProperty("--tilt-x", "0deg");
+        transferTool.style.setProperty("--tilt-y", "0deg");
+      });
+    }
+
     document.addEventListener("DOMContentLoaded", () => {
       translatePage();
+      setupLuxuryMotion();
       const qrContainer = document.getElementById("landing-qr");
       const dropZone = document.getElementById("landing-drop-zone");
       const fileInput = document.getElementById("landing-file-input");
