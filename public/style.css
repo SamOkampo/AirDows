@@ -214,6 +214,7 @@ body {
 .onboarding-toggle {
   display: grid;
   place-items: center;
+  position: relative;
   width: 34px;
   height: 34px;
   flex: 0 0 34px;
@@ -224,9 +225,41 @@ body {
   color: var(--text-secondary);
   cursor: pointer;
   font: inherit;
-  font-size: 1.15rem;
-  line-height: 0;
+  font-size: 0;
+  line-height: 1;
   transition: border-color 180ms ease, color 180ms ease, background 180ms ease;
+}
+
+.onboarding-toggle::before,
+.onboarding-toggle::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 10px;
+  height: 1.5px;
+  border-radius: 999px;
+  background: currentColor;
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+
+.onboarding-toggle::after {
+  transform: translate(-50%, -50%) rotate(-45deg);
+}
+
+.onboarding-guide.is-compact .onboarding-toggle::before {
+  content: "?";
+  width: auto;
+  height: auto;
+  background: transparent;
+  font-size: 0.9rem;
+  font-weight: 700;
+  line-height: 1;
+  transform: translate(-50%, -52%);
+}
+
+.onboarding-guide.is-compact .onboarding-toggle::after {
+  display: none;
 }
 
 .onboarding-toggle:hover,
