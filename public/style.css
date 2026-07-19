@@ -212,9 +212,12 @@ body {
 }
 
 .onboarding-toggle {
+  display: grid;
+  place-items: center;
   width: 34px;
   height: 34px;
   flex: 0 0 34px;
+  padding: 0;
   border: 1px solid var(--border-light);
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.04);
@@ -222,7 +225,7 @@ body {
   cursor: pointer;
   font: inherit;
   font-size: 1.15rem;
-  line-height: 1;
+  line-height: 0;
   transition: border-color 180ms ease, color 180ms ease, background 180ms ease;
 }
 
