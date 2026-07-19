@@ -52,35 +52,52 @@
 
   <main>
     <section class="hero">
-      <div class="shell">
-        <div class="hero-copy">
-          <p class="hero-kicker" data-i18n="hero_kicker">Del celular al PC, sin cables</p>
-          <h1 data-i18n="hero_title">Pasa archivos del celular al PC sin cables</h1>
-          <p class="hero-description" data-i18n="hero_desc">Transfiere fotos, videos y documentos en su calidad original. Abre AirDows en ambos dispositivos y escanea un QR</p>
-          <div class="hero-actions">
-            <a class="button hero-primary" href="/app" data-umami-event="hero_cta_clicked" data-umami-event-variant="direct-v1" data-i18n="hero_cta">Abrir AirDows gratis</a>
-            <a class="hero-secondary" href="#como-funciona" data-umami-event="hero_how_clicked" data-i18n="hero_secondary">Ver cómo funciona</a>
+      <div class="shell hero-container">
+        <div class="hero-content">
+          <h1 class="hero-title">Send files instantly between your devices</h1>
+          
+          <p class="hero-subtitle">Transfer photos, videos and documents directly between devices.<br>No account. No permanent cloud storage.</p>
+          
+          <div class="hero-trust-line">
+            <span class="trust-item">✓ No sign-up</span>
+            <span class="trust-item">✓ No permanent storage</span>
+            <span class="trust-item">✓ Encrypted in transit</span>
           </div>
-          <p class="hero-instruction"><span aria-hidden="true"></span><span data-i18n="hero_instruction">Ábrelo también en el otro dispositivo y escanea el QR</span></p>
+          
+          <a class="button hero-cta" href="/app" data-umami-event="hero_cta_clicked" data-umami-event-variant="hero-v2">Open AirDows</a>
+          
+          <p class="hero-subtext" data-i18n="hero_instruction">Scan a QR code or enter a 4-digit code to pair your devices</p>
         </div>
-
-        <div class="transfer-tool" aria-label="Preparar archivos para transferir" data-i18n-aria="tool_aria">
-          <section id="landing-drop-zone" class="drop-zone" tabindex="0">
-            <span class="air-pet" role="img" aria-label="Air-pet listo" data-i18n-aria="pet_aria"></span>
-            <p class="drop-overline" data-i18n="drop_overline">Tus archivos empiezan aquí</p>
-            <h2 id="drop-title" data-i18n="drop_title">Suelta tus archivos</h2>
-            <p id="drop-status" class="drop-description" data-i18n="drop_desc">O elígelos desde este dispositivo. Los dejaremos listos dentro de AirDows</p>
-            <div class="file-picker-row"><button id="select-files" class="button" type="button" data-i18n="drop_button">Elegir archivos</button><p class="drop-hint" data-i18n="drop_hint">Fotos, videos, carpetas comprimidas y más</p></div>
-            <div id="staged-files" class="staged-files is-hidden" aria-live="polite">
-              <div class="staged-file-copy"><strong id="staged-files-title"></strong><span id="staged-files-detail"></span></div>
-              <button id="continue-files" class="button staged-continue" type="button" disabled data-i18n="continue_button">Continuar en AirDows</button>
-            </div>
-            <input id="landing-file-input" class="hidden-input" type="file" multiple>
-          </section>
-
-          <aside class="tool-aside"><p class="qr-overline" data-i18n="qr_overline">¿Estás en el PC?</p><h3 data-i18n="qr_title">Abre AirDows en tu celular</h3><p data-i18n="qr_desc">Escanea y continúa desde el navegador</p><button id="landing-qr" class="qr-button" type="button" aria-label="Abrir AirDows en el celular" data-i18n-aria="qr_aria"></button></aside>
+        
+        <div class="hero-visual">
+          <div class="device-mockup" role="img" aria-label="AirDows running on mobile and desktop">
+            <svg class="mockup-illustration" viewBox="0 0 280 420" xmlns="http://www.w3.org/2000/svg">
+              <!-- Desktop Device -->
+              <rect x="140" y="20" width="130" height="90" rx="4" fill="rgba(255,255,255,0.08)" stroke="rgba(255,255,255,0.15)" stroke-width="1"/>
+              <rect x="145" y="25" width="120" height="80" rx="2" fill="rgba(22,139,255,0.1)" stroke="rgba(22,139,255,0.3)" stroke-width="1"/>
+              <circle cx="205" cy="100" r="2" fill="rgba(255,255,255,0.3)"/>
+              <text x="205" y="65" font-size="8" fill="rgba(255,255,255,0.4)" text-anchor="middle">Desktop</text>
+              
+              <!-- Mobile Device -->
+              <rect x="10" y="120" width="70" height="130" rx="6" fill="rgba(255,255,255,0.08)" stroke="rgba(255,255,255,0.15)" stroke-width="1"/>
+              <rect x="14" y="128" width="62" height="110" rx="4" fill="rgba(22,139,255,0.1)" stroke="rgba(22,139,255,0.3)" stroke-width="1"/>
+              <circle cx="45" cy="132" r="1.5" fill="rgba(255,255,255,0.3)"/>
+              <text x="45" y="175" font-size="7" fill="rgba(255,255,255,0.4)" text-anchor="middle">Mobile</text>
+              
+              <!-- Connection Line -->
+              <path d="M 80 185 Q 140 180 210 110" stroke="rgba(0,229,245,0.4)" stroke-width="1.5" fill="none" stroke-dasharray="4,4"/>
+              
+              <!-- Data Particles -->
+              <circle cx="100" cy="180" r="2" fill="rgba(0,229,245,0.6)" opacity="0.8"/>
+              <circle cx="140" cy="160" r="1.5" fill="rgba(0,229,245,0.5)" opacity="0.6"/>
+              <circle cx="180" cy="130" r="2" fill="rgba(0,229,245,0.6)" opacity="0.8"/>
+              
+              <!-- Speed Indicator -->
+              <text x="140" y="380" font-size="12" font-weight="bold" fill="rgba(37,230,164,0.8)" text-anchor="middle">Ultra-fast P2P</text>
+              <text x="140" y="395" font-size="9" fill="rgba(255,255,255,0.4)" text-anchor="middle">Direct connection</text>
+            </svg>
+          </div>
         </div>
-        <p class="tool-note" data-i18n="tool_note">Sin cuenta, sin recompresión, ambos dispositivos permanecen activos durante el envío</p>
       </div>
     </section>
 
