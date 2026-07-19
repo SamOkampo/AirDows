@@ -34,20 +34,32 @@ body {
 /* Background floating glow circles */
 .background-decor {
   position: fixed;
-  width: 100vw;
-  height: 100vh;
-  top: 0;
-  left: 0;
-  z-index: -1;
+  inset: -3vmax;
+  z-index: 0;
   overflow: hidden;
   pointer-events: none;
+  background: url('/assets/airdows-flow-background.webp') center / cover no-repeat;
+  filter: saturate(0.96) contrast(1.04);
+  will-change: transform;
+  animation: app-background-drift 30s cubic-bezier(0.22, 1, 0.36, 1) infinite alternate;
+}
+
+.background-decor::after {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(180deg, rgba(9, 10, 15, 0.36), rgba(9, 10, 15, 0.7)),
+    linear-gradient(90deg, rgba(9, 10, 15, 0.28), transparent 55%, rgba(9, 10, 15, 0.18));
+  content: '';
+}
+
+@keyframes app-background-drift {
+  0% { transform: translate3d(-0.8%, -0.5%, 0) scale(1.025); }
+  100% { transform: translate3d(0.8%, 0.5%, 0) scale(1.055); }
 }
 
 .circle {
-  position: absolute;
-  border-radius: 50%;
-  filter: blur(140px);
-  opacity: 0.4;
+  display: none;
 }
 
 .circle-1 {
@@ -146,8 +158,8 @@ body {
 /* Glass Card */
 .card-glass {
   background: var(--bg-card);
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   border: 1px solid var(--border-light);
   border-radius: 24px;
   box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4);
@@ -1589,8 +1601,19 @@ body {
 }
 
 @media (max-width: 600px) {
+  .background-decor {
+    background-position: 58% center;
+  }
+
   .shared-files-notice {
     align-items: flex-start;
     flex-direction: column;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .background-decor {
+    animation: none !important;
+    transform: scale(1.015) !important;
   }
 }

@@ -37,7 +37,7 @@ body {
 
 body::before {
   position: fixed;
-  inset: -7vmax;
+  inset: -3vmax;
   z-index: -2;
   background: url("/assets/airdows-flow-background.webp") center / cover no-repeat;
   content: "";
@@ -60,10 +60,10 @@ body::after {
 
 @keyframes backgroundDrift {
   0% {
-    transform: translate3d(-1.4%, calc(var(--background-shift) - 1%), 0) scale(1.08);
+    transform: translate3d(-0.8%, calc(var(--background-shift) - 0.5%), 0) scale(1.025);
   }
   100% {
-    transform: translate3d(1.4%, calc(var(--background-shift) + 1%), 0) scale(1.13);
+    transform: translate3d(0.8%, calc(var(--background-shift) + 0.5%), 0) scale(1.055);
   }
 }
 
@@ -619,8 +619,10 @@ h1 {
   top: 30px;
   left: 36px;
   color: var(--cyan);
-  font-size: 0.75rem;
+  font-size: 1.75rem;
   font-weight: 800;
+  line-height: 1;
+  text-shadow: 0 0 24px rgba(0, 229, 245, 0.2);
 }
 
 .feature-large::after {
@@ -1035,6 +1037,12 @@ h1 {
     font-size: 1.65rem;
   }
 
+  .feature-index {
+    top: 26px;
+    left: 24px;
+    font-size: 1.45rem;
+  }
+
   .process-step {
     grid-template-columns: 64px 1fr;
     gap: 14px;
@@ -1094,7 +1102,7 @@ h1 {
 
   body::before {
     animation: none !important;
-    transform: scale(1.04) !important;
+    transform: scale(1.015) !important;
   }
 
   .motion-ready [data-reveal],
