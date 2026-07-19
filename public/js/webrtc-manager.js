@@ -755,10 +755,13 @@ class WebRTCManager {
       connectionType: performanceProfile.connectionType,
       chunkSize: CHUNK_SIZE
     };
-    this.dataChannel.send(JSON.stringify(metadata));
-
     let resumeOffset;
     try {
+      await this.sendWithBackpressure(
+        JSON.stringify(metadata),
+        BUFFER_THRESHOLD,
+        transfer.abortController.signal
+      );
       resumeOffset = await this.waitForReceiverReady(transfer);
       if (resumeOffset === null) {
         throw new Error('El receptor no confirmó que está listo para recibir.');
@@ -800,15 +803,6 @@ class WebRTCManager {
             throw new Error('Data connection closed during transfer.');
           }
 
-          if (this.dataChannel.bufferedAmount > BUFFER_THRESHOLD) {
-            await this.waitForBufferedAmountLow(transfer.abortController.signal);
-          }
-
-          this.throwIfTransferCancelled(transfer);
-          if (this.dataChannel.readyState !== 'open') {
-            throw new Error('Data connection closed during transfer.');
-          }
-
           const outgoingChunk = sessionKey ? await this.encryptChunk(chunk) : chunk;
           if (performanceProfile.connectionType === 'relay') {
             if (!this.reserveRelayBudget(outgoingChunk.byteLength)) {
@@ -825,7 +819,11 @@ class WebRTCManager {
               this.onRelayUsage({ chunkSize: CHUNK_SIZE, chunks: 1 });
             }
           }
-          this.dataChannel.send(outgoingChunk);
+          await this.sendWithBackpressure(
+            outgoingChunk,
+            BUFFER_THRESHOLD,
+            transfer.abortController.signal
+          );
           chunkOffset += sliceSize;
           offset += sliceSize;
           transfer.bytesTransferred = offset;
@@ -908,31 +906,31 @@ class WebRTCManager {
     const lowMemory = typeof navigator !== 'undefined' && Number(navigator.deviceMemory) > 0 && navigator.deviceMemory <= 4;
 
     let chunkSize = mobile ? this.CHUNK_SIZE : this.DESKTOP_CHUNK_SIZE;
-    let bufferThreshold = 16 * 1024 * 1024;
-    let lowThreshold = 4 * 1024 * 1024;
+    let bufferThreshold = 8 * 1024 * 1024;
+    let lowThreshold = 2 * 1024 * 1024;
     let label = 'Directa veloz';
 
     if (connection.connectionType === 'relay') {
       chunkSize = mobile ? this.FALLBACK_CHUNK_SIZE : this.CHUNK_SIZE;
-      bufferThreshold = 8 * 1024 * 1024;
-      lowThreshold = 2 * 1024 * 1024;
+      bufferThreshold = 4 * 1024 * 1024;
+      lowThreshold = 1 * 1024 * 1024;
       label = 'Relay optimizado';
     } else if (connection.connectionType === 'srflx') {
       chunkSize = mobile ? this.FALLBACK_CHUNK_SIZE : this.CHUNK_SIZE;
-      bufferThreshold = 8 * 1024 * 1024;
-      lowThreshold = 2 * 1024 * 1024;
+      bufferThreshold = 4 * 1024 * 1024;
+      lowThreshold = 1 * 1024 * 1024;
       label = 'Directa adaptable';
     } else if (connection.connectionType === 'unknown') {
       chunkSize = this.CHUNK_SIZE;
-      bufferThreshold = 8 * 1024 * 1024;
-      lowThreshold = 2 * 1024 * 1024;
+      bufferThreshold = 4 * 1024 * 1024;
+      lowThreshold = 1 * 1024 * 1024;
       label = 'Compatibilidad segura';
     }
 
     if (saveData || slowNetwork || lowMemory) {
       chunkSize = Math.min(chunkSize, this.FALLBACK_CHUNK_SIZE);
-      bufferThreshold = Math.min(bufferThreshold, 4 * 1024 * 1024);
-      lowThreshold = Math.min(lowThreshold, 1 * 1024 * 1024);
+      bufferThreshold = Math.min(bufferThreshold, 2 * 1024 * 1024);
+      lowThreshold = Math.min(lowThreshold, 512 * 1024);
       label = 'Ahorro de red';
     }
 
@@ -1129,6 +1127,51 @@ class WebRTCManager {
       // Some browsers do not dispatch bufferedamountlow consistently under load.
       pollTimer = setInterval(handleLow, 100);
     });
+  }
+
+  async sendWithBackpressure(data, highWaterMark, signal) {
+    const byteLength = typeof data === 'string'
+      ? new TextEncoder().encode(data).byteLength
+      : Number(data && (data.byteLength || data.size)) || 0;
+    let queueFullRetries = 0;
+
+    while (true) {
+      if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
+        throw new Error('Data connection closed during transfer.');
+      }
+
+      if (signal && signal.aborted) {
+        const err = new Error('Transfer cancelled.');
+        err.name = 'AbortError';
+        throw err;
+      }
+
+      const channel = this.dataChannel;
+      if (channel.bufferedAmount + byteLength > highWaterMark) {
+        await this.waitForBufferedAmountLow(signal);
+        continue;
+      }
+
+      try {
+        channel.send(data);
+        return;
+      } catch (err) {
+        const queueIsFull = err && (
+          /queue is full|send queue|bufferedamount/i.test(err.message || '') ||
+          (err.name === 'OperationError' && channel.bufferedAmount > channel.bufferedAmountLowThreshold)
+        );
+
+        if (!queueIsFull || queueFullRetries >= 3) throw err;
+
+        queueFullRetries += 1;
+        console.warn('[AirDows] RTCDataChannel queue full, waiting before retry', {
+          retry: queueFullRetries,
+          bufferedAmount: channel.bufferedAmount,
+          chunkBytes: byteLength
+        });
+        await this.waitForBufferedAmountLow(signal);
+      }
+    }
   }
 
   startNetworkDiagnostics(transferInfo) {
