@@ -287,7 +287,9 @@ class WebRTCManager {
 
     const envelope = new Uint8Array(data);
     if (envelope.byteLength <= 28) {
-      throw new Error('Chunk cifrado inválido.');
+      const error = new Error('Invalid encrypted chunk.');
+      error.code = 'INVALID_ENCRYPTED_CHUNK';
+      throw error;
     }
 
     const iv = envelope.slice(0, 12);
@@ -394,7 +396,9 @@ class WebRTCManager {
       : data;
 
     if (state.receivedSize + chunkData.byteLength > state.metadata.size) {
-      throw new Error('Se recibió más información de la esperada.');
+      const error = new Error('Received more data than expected.');
+      error.code = 'UNEXPECTED_TRANSFER_SIZE';
+      throw error;
     }
 
     if (state.writeMode === 'disk' && state.writable) {
@@ -764,7 +768,9 @@ class WebRTCManager {
       );
       resumeOffset = await this.waitForReceiverReady(transfer);
       if (resumeOffset === null) {
-        throw new Error('El receptor no confirmó que está listo para recibir.');
+        const error = new Error('The receiver did not confirm readiness.');
+        error.code = 'RECEIVER_NOT_READY';
+        throw error;
       }
     } catch (err) {
       this.resumeWaiters.delete(transfer.transferId);
@@ -997,8 +1003,9 @@ class WebRTCManager {
   }
 
   createProRequiredError() {
-    const error = new Error('Se alcanzó el límite de relay del plan gratuito.');
+    const error = new Error('The free relay limit has been reached.');
     error.name = 'ProRequiredError';
+    error.code = 'RELAY_LIMIT_REACHED';
     return error;
   }
 

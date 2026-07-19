@@ -92,6 +92,19 @@ a {
   color: var(--text);
 }
 
+.nav-links .page-language-link {
+  display: inline-flex;
+  min-width: 34px;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
 .button {
   display: inline-flex;
   min-height: 44px;
@@ -293,7 +306,7 @@ footer {
     width: min(100% - 32px, 900px);
   }
 
-  .nav-links a:not(.button) {
+  .nav-links a:not(.button):not(.page-language-link) {
     display: none;
   }
 

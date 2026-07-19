@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>How AirDows works | Device-to-device file transfers</title>
+  <meta name="description" content="Learn how AirDows pairs two devices, chooses a direct or relay route, and saves the file on the receiving device.">
+  <link rel="canonical" href="https://airdows.com/en/how-it-works">
+  <link rel="alternate" hreflang="en" href="https://airdows.com/en/how-it-works">
+  <link rel="alternate" hreflang="es" href="https://airdows.com/como-funciona">
+  <link rel="icon" type="image/png" href="/assets/favicon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Sora:wght@600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/trust.css">
+  <script src="/js/language-preference.js"></script>
+  <script defer src="https://cloud.umami.is/script.js" data-website-id="09412ec8-2ab9-41f4-a833-21fdcf60bf41"></script>
+</head>
+<body>
+  <header class="site-header"><div class="header-inner"><a class="brand" href="/?lang=en" aria-label="AirDows home"><img src="/assets/favicon.png" alt="" width="34" height="34"><span>AirDows</span></a><nav class="nav-links" aria-label="Main navigation"><a href="/en/how-it-works" aria-current="page">How it works</a><a href="/en/privacy">Privacy</a><a href="/en/security">Security</a><a class="page-language-link" href="/como-funciona?lang=es" lang="es">ES</a><a class="button" href="/app?lang=en" data-umami-event="trust_open_app" data-umami-event-page="how-it-works">Open AirDows</a></nav></div></header>
+  <main>
+    <span class="eyebrow">How it works</span>
+    <h1>How your file travels</h1>
+    <p class="lead">AirDows connects two devices that are online at the same time. It does not create a download link or store the file for later.</p>
+    <section class="trust-section" aria-labelledby="steps-title"><h2 id="steps-title">Three steps from start to finish</h2><div class="steps">
+      <article class="step"><h3>Pair the devices</h3><p>One device creates a QR code and a four-digit temporary PIN. The other scans or enters it. An unused room expires after three minutes.</p></article>
+      <article class="step"><h3>AirDows finds a route</h3><p>It first attempts a direct WebRTC connection between the browsers. If network conditions block that path, an encrypted TURN relay forwards the session traffic.</p></article>
+      <article class="step"><h3>The receiver saves the file</h3><p>Supported browsers can write directly to disk. Other browsers temporarily assemble the file in memory before offering the download.</p></article>
+    </div></section>
+    <section class="trust-section" aria-labelledby="routes-title"><h2 id="routes-title">What each route means</h2><div class="summary-grid">
+      <article class="summary-item"><h3>Direct route</h3><p>The two browsers communicate with each other. This is usually the fastest path when both networks allow it.</p></article>
+      <article class="summary-item"><h3>Relay route</h3><p>A TURN provider forwards encrypted traffic while the session is active. It does not create a persistent copy or a later download link.</p></article>
+    </div></section>
+    <section class="trust-section" aria-labelledby="limits-title"><h2 id="limits-title">What you should know</h2><ul class="plain-list"><li>Speed depends on both devices, their networks, and the selected route.</li><li>Both devices must stay connected until the transfer finishes.</li><li>Locking a phone or closing the tab can pause or interrupt a transfer.</li><li>Browser-based Bluetooth transfer is not currently offered because support is inconsistent, especially on iOS.</li><li>The signaling server does not receive the contents of your files.</li></ul><div class="callout"><strong>In short:</strong> AirDows moves a file now between two active devices. It is not cloud storage.</div></section>
+    <div class="final-action"><div><h2>Ready to try it?</h2><p>Open AirDows on both devices and pair them with the QR code or PIN.</p></div><a class="button" href="/app?lang=en" data-umami-event="trust_open_app" data-umami-event-page="how-it-works_bottom">Transfer a file</a></div>
+  </main>
+  <footer><div class="footer-inner"><span>© 2026 AirDows</span><div class="footer-links"><a href="/?lang=en">Home</a><a href="/en/privacy">Privacy</a><a href="/en/security">Security</a><a href="mailto:saocampoe@unal.edu.co">Contact</a></div></div></footer>
+</body>
+</html>

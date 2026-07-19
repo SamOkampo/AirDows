@@ -100,6 +100,49 @@ body {
   margin-bottom: 32px;
 }
 
+.app-language-switch {
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+
+.language-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--border-light);
+  border-radius: 7px;
+  background: rgba(10, 12, 18, 0.48);
+  backdrop-filter: blur(12px);
+}
+
+.language-switch button {
+  min-width: 31px;
+  height: 27px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.67rem;
+  font-weight: 700;
+  transition: var(--transition-smooth);
+}
+
+.language-switch button:hover,
+.language-switch button:focus-visible {
+  color: var(--text-primary);
+  outline: none;
+}
+
+.language-switch button.is-active {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-primary);
+}
+
 .pwa-install-button {
   align-items: center;
   background: rgba(22, 139, 255, 0.12);
@@ -1427,6 +1470,12 @@ body {
 
   .card-glass {
     padding: 18px;
+  }
+
+  .app-language-switch {
+    position: static;
+    width: max-content;
+    margin: 0 auto 14px;
   }
 
   .onboarding-guide {

@@ -32,14 +32,21 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/landing.css">
+  <script src="/js/language-preference.js"></script>
   <script defer src="https://cloud.umami.is/script.js" data-website-id="09412ec8-2ab9-41f4-a833-21fdcf60bf41"></script>
 </head>
 <body>
   <header class="site-header">
     <div class="shell header-inner">
       <a class="brand" href="/" aria-label="AirDows inicio" data-i18n-aria="header_logo_aria"><img src="/assets/favicon.png" alt="" width="36" height="36"><span>AirDows</span></a>
-      <nav class="main-nav" aria-label="Navegación principal"><a href="#como-funciona" data-i18n="nav_how">Cómo funciona</a><a href="#guias" data-i18n="nav_guides">Guías</a><a href="/privacidad" data-i18n="nav_privacy">Privacidad</a></nav>
-      <a class="button button-secondary header-action" href="/app" data-umami-event="landing_header_cta" data-i18n="open_app">Abrir AirDows</a>
+      <nav class="main-nav" aria-label="Navegación principal" data-i18n-aria="nav_aria"><a href="#como-funciona" data-i18n="nav_how">Cómo funciona</a><a href="#guias" data-i18n="nav_guides">Guías</a><a href="/privacidad" data-i18n="nav_privacy">Privacidad</a></nav>
+      <div class="header-controls">
+        <div class="language-switch" aria-label="Language">
+          <button type="button" data-language="es" aria-label="Español">ES</button>
+          <button type="button" data-language="en" aria-label="English">EN</button>
+        </div>
+        <a class="button button-secondary header-action" href="/app" data-umami-event="landing_header_cta" data-i18n="open_app">Abrir AirDows</a>
+      </div>
     </div>
   </header>
 
@@ -59,7 +66,7 @@
 
         <div class="transfer-tool" aria-label="Preparar archivos para transferir" data-i18n-aria="tool_aria">
           <section id="landing-drop-zone" class="drop-zone" tabindex="0">
-            <span class="air-pet" role="img" aria-label="Air-pet listo"></span>
+            <span class="air-pet" role="img" aria-label="Air-pet listo" data-i18n-aria="pet_aria"></span>
             <p class="drop-overline" data-i18n="drop_overline">Tus archivos empiezan aquí</p>
             <h2 id="drop-title" data-i18n="drop_title">Suelta tus archivos</h2>
             <p id="drop-status" class="drop-description" data-i18n="drop_desc">O elígelos desde este dispositivo. Los dejaremos listos dentro de AirDows</p>
@@ -110,7 +117,7 @@
     <section class="shell final-cta"><div><p class="section-kicker" data-i18n="final_kicker">Tu turno</p><h2 data-i18n="final_title">Ese archivo ya puede irse</h2><p data-i18n="final_desc">Abre AirDows en tus dos dispositivos. Lo demás dura un momento</p></div><a class="button" href="/app" data-umami-event="landing_final_cta" data-i18n="final_cta">Abrir AirDows</a></section>
   </main>
 
-  <footer class="site-footer"><div class="shell footer-inner"><span data-i18n="footer">© 2026 AirDows</span><nav class="footer-links" aria-label="Páginas y guías"><a href="/como-funciona" data-i18n="nav_how">Cómo funciona</a><a href="/privacidad" data-i18n="nav_privacy">Privacidad</a><a href="/seguridad" data-i18n="nav_security">Seguridad</a><a href="mailto:saocampoe@unal.edu.co" data-i18n="contact">Contacto</a></nav></div></footer>
+  <footer class="site-footer"><div class="shell footer-inner"><span data-i18n="footer">© 2026 AirDows</span><nav class="footer-links" aria-label="Páginas y guías" data-i18n-aria="footer_aria"><a href="/como-funciona" data-i18n="nav_how">Cómo funciona</a><a href="/privacidad" data-i18n="nav_privacy">Privacidad</a><a href="/seguridad" data-i18n="nav_security">Seguridad</a><a href="mailto:saocampoe@unal.edu.co" data-i18n="contact">Contacto</a></nav></div></footer>
 
   <script src="/js/qrcode-generator.js"></script>
   <script src="/js/qr-manager.js"></script>
@@ -118,7 +125,7 @@
     const i18n = {
       en: {
         title: "AirDows | Move files from phone to PC", description: "Move photos, videos and documents between your phone and PC. No account, compression or installation required to start.", og_title: "Your files. Your devices. No detours. | AirDows", og_description: "Drop it here. Pick it up there. AirDows moves the original file between your devices.",
-        header_logo_aria: "AirDows home", nav_how: "How it works", nav_guides: "Guides", nav_privacy: "Privacy", nav_security: "Security", contact: "Contact", open_app: "Open AirDows",
+        header_logo_aria: "AirDows home", nav_aria: "Main navigation", footer_aria: "Pages and guides", pet_aria: "Air-pet ready", nav_how: "How it works", nav_guides: "Guides", nav_privacy: "Privacy", nav_security: "Security", contact: "Contact", open_app: "Open AirDows",
         hero_kicker: "Phone to PC, no cables", hero_title: "Move files from your phone to your PC without cables", hero_desc: "Transfer photos, videos and documents in their original quality. Open AirDows on both devices and scan a QR code", hero_cta: "Open AirDows free", hero_secondary: "See how it works", hero_instruction: "Open it on the other device too and scan the QR code",
         tool_aria: "Prepare files to transfer", drop_overline: "Your files start here", drop_title: "Drop your files", drop_desc: "Or choose them from this device. We will have them ready inside AirDows", drop_button: "Choose files", drop_hint: "Photos, videos, compressed folders and more", change_files: "Change files", continue_button: "Continue in AirDows", selection_one: "1 file ready", selection_many: "{count} files ready", saving_selection: "Keeping your selection ready…", selection_ready: "Your selection will stay here until you continue", selection_fallback: "Open AirDows and choose the files again to continue", qr_overline: "On your PC?", qr_title: "Open AirDows on your phone", qr_desc: "Scan and continue in your browser", qr_aria: "Open AirDows on your phone", tool_note: "No account, no recompression, both devices stay active during the transfer",
         manifesto_title: "Do not upload it\nMove it", manifesto_body: "AirDows connects two devices just long enough to deliver the file. It does not create another place where you have to find it later",
@@ -130,7 +137,7 @@
       },
       es: {
         title: "AirDows | Pasa archivos del celular al PC", description: "Mueve fotos, videos y documentos entre tu celular y tu PC. Sin cuenta, sin compresión y sin instalar para empezar.", og_title: "Tus archivos. Tus dispositivos. Sin rodeos. | AirDows", og_description: "Arrastra aquí. Suéltalo allá. AirDows mueve el archivo original entre tus dispositivos.",
-        header_logo_aria: "AirDows inicio", nav_how: "Cómo funciona", nav_guides: "Guías", nav_privacy: "Privacidad", nav_security: "Seguridad", contact: "Contacto", open_app: "Abrir AirDows",
+        header_logo_aria: "AirDows inicio", nav_aria: "Navegación principal", footer_aria: "Páginas y guías", pet_aria: "Air-pet listo", nav_how: "Cómo funciona", nav_guides: "Guías", nav_privacy: "Privacidad", nav_security: "Seguridad", contact: "Contacto", open_app: "Abrir AirDows",
         hero_kicker: "Del celular al PC, sin cables", hero_title: "Pasa archivos del celular al PC sin cables", hero_desc: "Transfiere fotos, videos y documentos en su calidad original. Abre AirDows en ambos dispositivos y escanea un QR", hero_cta: "Abrir AirDows gratis", hero_secondary: "Ver cómo funciona", hero_instruction: "Ábrelo también en el otro dispositivo y escanea el QR",
         tool_aria: "Preparar archivos para transferir", drop_overline: "Tus archivos empiezan aquí", drop_title: "Suelta tus archivos", drop_desc: "O elígelos desde este dispositivo. Los dejaremos listos dentro de AirDows", drop_button: "Elegir archivos", drop_hint: "Fotos, videos, carpetas comprimidas y más", change_files: "Cambiar archivos", continue_button: "Continuar en AirDows", selection_one: "1 archivo listo", selection_many: "{count} archivos listos", saving_selection: "Guardando tu selección…", selection_ready: "Tu selección se queda aquí hasta que continúes", selection_fallback: "Abre AirDows y vuelve a elegir los archivos para continuar", qr_overline: "¿Estás en el PC?", qr_title: "Abre AirDows en tu celular", qr_desc: "Escanea y continúa desde el navegador", qr_aria: "Abrir AirDows en el celular", tool_note: "Sin cuenta, sin recompresión, ambos dispositivos permanecen activos durante el envío",
         manifesto_title: "No lo subas\nMuévelo", manifesto_body: "AirDows conecta dos dispositivos durante el tiempo justo para entregar el archivo. No crea otro lugar donde tengas que buscarlo después",
@@ -142,10 +149,10 @@
       }
     };
 
-    let currentLanguage = "es";
+    let currentLanguage = "en";
 
     function translatePage() {
-      currentLanguage = (navigator.language || navigator.userLanguage || "es").startsWith("es") ? "es" : "en";
+      currentLanguage = window.airDowsLanguage?.get() || ((navigator.language || "en").startsWith("es") ? "es" : "en");
       document.documentElement.lang = currentLanguage;
       document.querySelectorAll("[data-i18n]").forEach((element) => {
         const value = i18n[currentLanguage][element.dataset.i18n];
@@ -160,6 +167,18 @@
         if (value) element.setAttribute("content", value);
       });
       document.title = i18n[currentLanguage].title;
+      const localizedRoutes = currentLanguage === "en" ? {
+        "a[href='/como-funciona']": "/en/how-it-works",
+        "a[href='/privacidad']": "/en/privacy",
+        "a[href='/seguridad']": "/en/security",
+        "a[href='/pasar-archivos-iphone-a-pc']": "/en/iphone-to-pc",
+        "a[href='/pasar-archivos-android-a-pc']": "/en/android-to-pc",
+        "a[href='/enviar-videos-sin-perder-calidad']": "/en/send-videos-without-losing-quality"
+      } : {};
+      Object.entries(localizedRoutes).forEach(([selector, href]) => {
+        document.querySelectorAll(selector).forEach((link) => { link.href = href; });
+      });
+      window.airDowsLanguage?.syncControls(currentLanguage);
     }
 
     function trackEvent(name, properties = {}) {

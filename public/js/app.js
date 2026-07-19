@@ -130,6 +130,16 @@ document.addEventListener('DOMContentLoaded', () => {
     return typeof t === 'function' ? t(key) : key;
   }
 
+  function translateTransferError(error) {
+    const errorKeys = {
+      INVALID_ENCRYPTED_CHUNK: 'invalid_encrypted_chunk',
+      UNEXPECTED_TRANSFER_SIZE: 'unexpected_transfer_size',
+      RECEIVER_NOT_READY: 'receiver_not_ready',
+      RELAY_LIMIT_REACHED: 'relay_limit_required'
+    };
+    return errorKeys[error?.code] ? translate(errorKeys[error.code]) : (error?.message || translate('toast_error'));
+  }
+
   const onboardingCopy = {
     1: { title: 'onboarding_step_1_title', hint: 'onboarding_step_1_hint' },
     2: { title: 'onboarding_step_2_title', hint: 'onboarding_step_2_hint' },
@@ -361,7 +371,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const handleWaitingWorker = (worker) => {
         if (!worker || !navigator.serviceWorker.controller) return;
         pendingServiceWorker = worker;
-        showToast('Actualización lista. Se aplicará cuando termine la cola.');
+        showToast(translate('update_deferred'));
         applyPendingPwaUpdate();
       };
 
@@ -395,7 +405,7 @@ document.addEventListener('DOMContentLoaded', () => {
     window.addEventListener('appinstalled', () => {
       deferredInstallPrompt = null;
       btnInstallApp.classList.add('hidden');
-      showToast('AirDows se instaló correctamente.');
+      showToast(translate('install_success'));
       trackAnalytics('pwa_installed');
     });
 
@@ -598,15 +608,15 @@ document.addEventListener('DOMContentLoaded', () => {
           nextItem.status = 'cancelled';
         } else if (err.name === 'ProRequiredError') {
           nextItem.status = 'error';
-          showToast('Límite gratuito de relay alcanzado. AirDows Pro permite continuar transferencias remotas grandes.');
+          showToast(translate('relay_limit_pro'));
         } else if (/connection (is not ready|closed)|data connection/i.test(err.message)) {
           nextItem.status = 'pending';
           p2pConnected = false;
-          showToast('Conexión interrumpida. Se reanudará al reconectar.');
+          showToast(translate('connection_interrupted'));
           break;
         } else {
           nextItem.status = 'error';
-          showToast(`${translate('transfer_fail')}${err.message}`);
+          showToast(`${translate('transfer_fail')}${translateTransferError(err)}`);
         }
       } finally {
         activeQueueItem = null;
@@ -804,7 +814,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   socketManager.onProRequired = () => {
     webrtcManager.handleProRequired();
-    showToast('Límite gratuito de relay alcanzado. Necesitas AirDows Pro para continuar por esta ruta.');
+    showToast(translate('relay_limit_required'));
   };
 
   // --- WEBRTC EVENT HANDLERS ---
@@ -1094,7 +1104,7 @@ document.addEventListener('DOMContentLoaded', () => {
       appendClipboardMessage(text, 'outgoing');
       clipboardTextInput.value = '';
     } catch (err) {
-      showToast(`${translate('send_fail')}${err.message}`);
+      showToast(`${translate('send_fail')}${translateTransferError(err)}`);
     }
   });
 
@@ -1222,11 +1232,11 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   window.addEventListener('offline', () => {
-    showToast('Sin conexión. La transferencia se reanudará cuando vuelva la red.');
+    showToast(translate('offline_resume'));
   });
 
   window.addEventListener('online', () => {
-    showToast('Conexión recuperada.');
+    showToast(translate('connection_recovered'));
   });
 
   document.addEventListener('visibilitychange', () => {

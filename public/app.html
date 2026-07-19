@@ -15,6 +15,7 @@
   <!-- Google Fonts & Tailwind/Bootstrap Style CSS -->
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
+  <script src="/js/language-preference.js"></script>
   <script defer src="https://cloud.umami.is/script.js" data-website-id="09412ec8-2ab9-41f4-a833-21fdcf60bf41"></script>
 </head>
 <body>
@@ -26,7 +27,11 @@
   <main class="app-container">
     <!-- Header -->
     <header class="app-header">
-      <button id="btn-install-app" class="pwa-install-button hidden" type="button" title="Instalar AirDows" aria-label="Instalar AirDows">
+      <div class="app-language-switch language-switch" aria-label="Language">
+        <button type="button" data-language="es" aria-label="Español">ES</button>
+        <button type="button" data-language="en" aria-label="English">EN</button>
+      </div>
+      <button id="btn-install-app" class="pwa-install-button hidden" type="button" title="Install AirDows" aria-label="Install AirDows" data-i18n-title="install_app" data-i18n-aria="install_app">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 19h14" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
       <div class="logo">
@@ -326,6 +331,17 @@
         onboarding_complete_hint: "The file arrived. You can transfer another one without reconnecting",
         onboarding_hide: "Hide guide",
         onboarding_show: "Show guide",
+        install_app: "Install AirDows",
+        update_deferred: "Update ready. It will be applied when the queue finishes.",
+        install_success: "AirDows was installed successfully.",
+        relay_limit_pro: "Free relay limit reached. AirDows Pro allows larger remote transfers.",
+        relay_limit_required: "Free relay limit reached. AirDows Pro is required to continue on this route.",
+        connection_interrupted: "Connection interrupted. The transfer will resume after reconnecting.",
+        offline_resume: "You are offline. The transfer will resume when the network returns.",
+        connection_recovered: "Connection restored.",
+        invalid_encrypted_chunk: "The encrypted data could not be verified.",
+        unexpected_transfer_size: "The received data exceeded the expected file size.",
+        receiver_not_ready: "The receiving device did not confirm that it was ready.",
         shared_file_ready: "1 file ready",
         shared_files_ready: "{count} files ready",
         shared_files_connect_hint: "Connect another device to send",
@@ -430,6 +446,17 @@
         onboarding_complete_hint: "El archivo llegó. Puedes transferir otro sin volver a conectar",
         onboarding_hide: "Ocultar guía",
         onboarding_show: "Mostrar guía",
+        install_app: "Instalar AirDows",
+        update_deferred: "Actualización lista. Se aplicará cuando termine la cola.",
+        install_success: "AirDows se instaló correctamente.",
+        relay_limit_pro: "Límite gratuito de relay alcanzado. AirDows Pro permite continuar transferencias remotas grandes.",
+        relay_limit_required: "Límite gratuito de relay alcanzado. Necesitas AirDows Pro para continuar por esta ruta.",
+        connection_interrupted: "Conexión interrumpida. Se reanudará al reconectar.",
+        offline_resume: "Sin conexión. La transferencia se reanudará cuando vuelva la red.",
+        connection_recovered: "Conexión recuperada.",
+        invalid_encrypted_chunk: "No se pudieron verificar los datos cifrados.",
+        unexpected_transfer_size: "Los datos recibidos superaron el tamaño esperado del archivo.",
+        receiver_not_ready: "El dispositivo receptor no confirmó que estaba listo.",
         shared_file_ready: "1 archivo listo",
         shared_files_ready: "{count} archivos listos",
         shared_files_connect_hint: "Conecta otro dispositivo para enviarlo",
@@ -500,7 +527,7 @@
       }
     };
 
-    let currentLang = (navigator.language || navigator.userLanguage).startsWith('es') ? 'es' : 'en';
+    let currentLang = window.airDowsLanguage?.get() || ((navigator.language || 'en').startsWith('es') ? 'es' : 'en');
 
     function t(key) {
       return i18n[currentLang][key] || key;
@@ -524,6 +551,7 @@
         const key = el.getAttribute('data-i18n-aria');
         if (i18n[currentLang][key]) el.setAttribute('aria-label', i18n[currentLang][key]);
       });
+      window.airDowsLanguage?.syncControls(currentLang);
       if (i18n[currentLang].title) document.title = i18n[currentLang].title;
     }
 

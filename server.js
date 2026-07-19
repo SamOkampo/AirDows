@@ -697,7 +697,13 @@ const publicPages = {
   '/seguridad': 'seguridad.html',
   '/pasar-archivos-iphone-a-pc': 'pasar-archivos-iphone-a-pc.html',
   '/pasar-archivos-android-a-pc': 'pasar-archivos-android-a-pc.html',
-  '/enviar-videos-sin-perder-calidad': 'enviar-videos-sin-perder-calidad.html'
+  '/enviar-videos-sin-perder-calidad': 'enviar-videos-sin-perder-calidad.html',
+  '/en/how-it-works': 'how-it-works.html',
+  '/en/privacy': 'privacy-en.html',
+  '/en/security': 'security-en.html',
+  '/en/iphone-to-pc': 'iphone-to-pc.html',
+  '/en/android-to-pc': 'android-to-pc.html',
+  '/en/send-videos-without-losing-quality': 'send-videos-en.html'
 };
 
 Object.entries(publicPages).forEach(([route, fileName]) => {

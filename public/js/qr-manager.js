@@ -21,7 +21,10 @@ const QRManager = {
     canvas.style.margin = '0 auto';
     canvas.style.width = `${size}px`;
     canvas.style.height = `${size}px`;
-    canvas.setAttribute('aria-label', 'QR de conexión AirDows');
+    const language = document.documentElement.lang || 'en';
+    canvas.setAttribute('aria-label', language.startsWith('es')
+      ? 'QR de conexión AirDows'
+      : 'AirDows connection QR code');
 
     context.fillStyle = '#ffffff';
     context.fillRect(0, 0, pixelSize, pixelSize);

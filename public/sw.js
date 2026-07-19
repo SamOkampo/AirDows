@@ -1,4 +1,4 @@
-const CACHE_NAME = 'airdows-shell-v13';
+const CACHE_NAME = 'airdows-shell-v14';
 const APP_SHELL = [
   '/',
   '/app',
@@ -11,6 +11,7 @@ const APP_SHELL = [
   '/assets/airdows-flow-background.webp',
   '/socket.io/socket.io.js',
   '/js/app.js',
+  '/js/language-preference.js',
   '/js/socket-manager.js',
   '/js/webrtc-manager.js',
   '/js/qrcode-generator.js',

@@ -1,11 +1,11 @@
 {
   "name": "AirDows",
   "short_name": "AirDows",
-  "description": "Transferencia de archivos P2P segura",
+  "description": "Secure device-to-device file transfer",
   "id": "/app",
   "start_url": "/app",
   "scope": "/",
-  "lang": "es",
+  "lang": "en",
   "display": "standalone",
   "background_color": "#0b1020",
   "theme_color": "#0b1020",
@@ -27,8 +27,8 @@
   ],
   "shortcuts": [
     {
-      "name": "Nueva transferencia",
-      "short_name": "Transferir",
+      "name": "New transfer",
+      "short_name": "Transfer",
       "url": "/app",
       "icons": [
         {
