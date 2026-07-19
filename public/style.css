@@ -1538,3 +1538,59 @@ body {
   }
 
 }
+/* Files prepared from the landing page stay visible until pairing succeeds. */
+.shared-files-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 20px;
+  padding: 14px 16px;
+  border: 1px solid rgba(37, 230, 164, 0.28);
+  border-radius: 8px;
+  background: rgba(37, 230, 164, 0.08);
+}
+
+.shared-files-notice.hidden {
+  display: none !important;
+}
+
+.shared-files-copy {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.shared-files-copy strong,
+.shared-files-copy span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shared-files-copy strong {
+  color: #f7f8fb;
+  font-size: 0.9rem;
+}
+
+.shared-files-copy span {
+  color: #9da4b3;
+  font-size: 0.76rem;
+}
+
+.shared-files-status {
+  flex: 0 0 auto;
+  padding: 7px 10px;
+  border-radius: 999px;
+  background: rgba(37, 230, 164, 0.12);
+  color: #38e6ad;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+@media (max-width: 600px) {
+  .shared-files-notice {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

@@ -18,6 +18,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const qrcodeDiv = document.getElementById('qrcode');
   const joinCodeInput = document.getElementById('join-code-input');
   const btnJoin = document.getElementById('btn-join');
+  const sharedFilesNotice = document.getElementById('shared-files-notice');
+  const sharedFilesTitle = document.getElementById('shared-files-title');
+  const sharedFilesDetail = document.getElementById('shared-files-detail');
 
   // Transfer Elements
   const connectionStatusText = document.getElementById('connection-status-text');
@@ -340,12 +343,42 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  function updateSharedFilesNotice() {
+    if (!sharedFilesNotice || !sharedFilesTitle || !sharedFilesDetail) return;
+    const fileCount = sharedFilesPending.length;
+    sharedFilesNotice.classList.toggle('hidden', fileCount === 0);
+    if (!fileCount) return;
+
+    sharedFilesTitle.textContent = fileCount === 1
+      ? translate('shared_file_ready')
+      : translate('shared_files_ready').replace('{count}', fileCount);
+    sharedFilesDetail.textContent = `${sharedFilesPending[0].name}${fileCount > 1 ? ` +${fileCount - 1}` : ''} · ${translate('shared_files_connect_hint')}`;
+  }
+
+  function clearPendingSharedFiles() {
+    if (!('indexedDB' in window)) return;
+    const request = indexedDB.open('airdows-share', 1);
+    request.onupgradeneeded = () => {
+      if (!request.result.objectStoreNames.contains('pending')) request.result.createObjectStore('pending');
+    };
+    request.onsuccess = () => {
+      const db = request.result;
+      const transaction = db.transaction('pending', 'readwrite');
+      transaction.objectStore('pending').delete('latest');
+      transaction.oncomplete = () => db.close();
+      transaction.onerror = () => db.close();
+    };
+    window.history.replaceState({}, document.title, window.location.pathname);
+  }
+
   async function restoreSharedFiles() {
     if (!new URLSearchParams(window.location.search).has('shared')) return;
     if (!('indexedDB' in window)) return;
 
     const request = indexedDB.open('airdows-share', 1);
-    request.onupgradeneeded = () => request.result.createObjectStore('pending');
+    request.onupgradeneeded = () => {
+      if (!request.result.objectStoreNames.contains('pending')) request.result.createObjectStore('pending');
+    };
     request.onsuccess = () => {
       const db = request.result;
       const transaction = db.transaction('pending', 'readwrite');
@@ -356,10 +389,14 @@ document.addEventListener('DOMContentLoaded', () => {
         const payload = readRequest.result;
         if (payload && payload.files && payload.files.length) {
           sharedFilesPending = Array.from(payload.files);
-          if (roomCode) enqueueFiles(sharedFilesPending);
+          if (roomCode) {
+            const filesToQueue = sharedFilesPending;
+            sharedFilesPending = [];
+            enqueueFiles(filesToQueue);
+            clearPendingSharedFiles();
+          }
         }
-        store.delete('latest');
-        window.history.replaceState({}, document.title, window.location.pathname);
+        updateSharedFilesNotice();
         db.close();
       };
     };
@@ -666,7 +703,9 @@ document.addEventListener('DOMContentLoaded', () => {
     if (sharedFilesPending.length) {
       const filesToQueue = sharedFilesPending;
       sharedFilesPending = [];
+      updateSharedFilesNotice();
       enqueueFiles(filesToQueue);
+      clearPendingSharedFiles();
     }
 
     // Initialize WebRTC connection (Check if we have config first)

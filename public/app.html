@@ -49,6 +49,10 @@
       
       <!-- 1. SETUP / PAIRING SCREEN -->
       <div id="setup-view" class="view">
+        <div id="shared-files-notice" class="shared-files-notice hidden" role="status" aria-live="polite">
+          <div class="shared-files-copy"><strong id="shared-files-title">1 file ready</strong><span id="shared-files-detail">Connect another device to send it.</span></div>
+          <span class="shared-files-status" data-i18n="shared_files_status">Waiting for connection</span>
+        </div>
         <div class="pairing-grid">
           
           <!-- Column A: Receive (Generate Code) -->
@@ -284,6 +288,10 @@
         send_desc: "Enter the 4-digit pairing code displayed on the receiving device to establish a direct connection.",
         join_placeholder: "Enter 4-Digit Code",
         btn_join: "Connect Device",
+        shared_file_ready: "1 file ready",
+        shared_files_ready: "{count} files ready",
+        shared_files_connect_hint: "Connect another device to send",
+        shared_files_status: "Waiting for connection",
         conn_status: "Connected to Remote Peer",
         btn_disconnect: "Disconnect",
         btn_disconnect_title: "Disconnect pairing",
@@ -362,6 +370,10 @@
         send_desc: "Introduce el código de emparejamiento de 4 dígitos que aparece en el dispositivo receptor para establecer una conexión directa.",
         join_placeholder: "Introduce el código de 4 dígitos",
         btn_join: "Conectar dispositivo",
+        shared_file_ready: "1 archivo listo",
+        shared_files_ready: "{count} archivos listos",
+        shared_files_connect_hint: "Conecta otro dispositivo para enviarlo",
+        shared_files_status: "Esperando conexión",
         conn_status: "Conectado al par remoto",
         btn_disconnect: "Desconectar",
         btn_disconnect_title: "Desconectar emparejamiento",
