@@ -21,6 +21,12 @@ document.addEventListener('DOMContentLoaded', () => {
   const sharedFilesNotice = document.getElementById('shared-files-notice');
   const sharedFilesTitle = document.getElementById('shared-files-title');
   const sharedFilesDetail = document.getElementById('shared-files-detail');
+  const onboardingGuide = document.getElementById('onboarding-guide');
+  const onboardingProgress = document.getElementById('onboarding-progress');
+  const onboardingCurrentTitle = document.getElementById('onboarding-current-title');
+  const onboardingHint = document.getElementById('onboarding-hint');
+  const btnToggleOnboarding = document.getElementById('btn-toggle-onboarding');
+  const onboardingStepElements = Array.from(document.querySelectorAll('[data-onboarding-step]'));
 
   // Transfer Elements
   const connectionStatusText = document.getElementById('connection-status-text');
@@ -92,6 +98,8 @@ document.addEventListener('DOMContentLoaded', () => {
   let networkHealthSample = null;
   let connectionEstablishedTracked = false;
   let lastTrackedRoute = 'unknown';
+  let onboardingStep = 1;
+  let onboardingComplete = false;
 
   // --- HELPERS ---
   function trackAnalytics(eventName, properties = {}) {
@@ -120,6 +128,64 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function translate(key) {
     return typeof t === 'function' ? t(key) : key;
+  }
+
+  const onboardingCopy = {
+    1: { title: 'onboarding_step_1_title', hint: 'onboarding_step_1_hint' },
+    2: { title: 'onboarding_step_2_title', hint: 'onboarding_step_2_hint' },
+    3: { title: 'onboarding_step_3_title', hint: 'onboarding_step_3_hint' },
+    4: { title: 'onboarding_step_4_title', hint: 'onboarding_step_4_hint' }
+  };
+
+  function updateOnboarding(step, options = {}) {
+    if (!onboardingGuide) return;
+    onboardingStep = Math.max(1, Math.min(4, Number(step) || 1));
+    onboardingComplete = Boolean(options.complete);
+
+    onboardingProgress.textContent = translate('onboarding_progress').replace('{step}', onboardingStep);
+    onboardingCurrentTitle.textContent = translate(onboardingComplete
+      ? 'onboarding_complete_title'
+      : onboardingCopy[onboardingStep].title);
+    onboardingHint.textContent = translate(onboardingComplete
+      ? 'onboarding_complete_hint'
+      : onboardingCopy[onboardingStep].hint);
+
+    onboardingStepElements.forEach((element) => {
+      const elementStep = Number(element.dataset.onboardingStep);
+      element.classList.toggle('is-current', !onboardingComplete && elementStep === onboardingStep);
+      element.classList.toggle('is-complete', onboardingComplete || elementStep < onboardingStep);
+    });
+  }
+
+  function setOnboardingCompact(compact, userInitiated = false) {
+    if (!onboardingGuide || !btnToggleOnboarding) return;
+    onboardingGuide.classList.toggle('is-compact', compact);
+    btnToggleOnboarding.textContent = compact ? '?' : '×';
+    btnToggleOnboarding.setAttribute('aria-expanded', String(!compact));
+    const label = translate(compact ? 'onboarding_show' : 'onboarding_hide');
+    btnToggleOnboarding.setAttribute('aria-label', label);
+    btnToggleOnboarding.title = label;
+
+    try {
+      localStorage.setItem('airdows-onboarding-compact-v1', compact ? '1' : '0');
+    } catch (_) {}
+
+    if (userInitiated) {
+      trackAnalytics(compact ? 'onboarding_dismissed' : 'onboarding_help_clicked', {
+        step: onboardingStep
+      });
+    }
+  }
+
+  function initializeOnboarding() {
+    if (!onboardingGuide) return;
+    let compact = false;
+    try {
+      compact = localStorage.getItem('airdows-onboarding-compact-v1') === '1';
+    } catch (_) {}
+    updateOnboarding(1);
+    setOnboardingCompact(compact);
+    trackAnalytics('onboarding_shown', { mode: compact ? 'compact' : 'expanded' });
   }
 
   function showToast(message) {
@@ -655,6 +721,7 @@ document.addEventListener('DOMContentLoaded', () => {
   socketManager.onCodeGenerated = (code) => {
     roomCode = code;
     trackAnalytics('room_created');
+    updateOnboarding(2);
     
     // Display 4 digits
     d1.textContent = code[0];
@@ -683,6 +750,7 @@ document.addEventListener('DOMContentLoaded', () => {
     p2pConnected = false;
     connectionEstablishedTracked = false;
     trackAnalytics('room_joined', { role });
+    updateOnboarding(2);
 
     
     switchView('transfer');
@@ -744,6 +812,7 @@ document.addEventListener('DOMContentLoaded', () => {
     console.log('WebRTC Connection state changed to:', state);
     if (state === 'connected') {
       p2pConnected = true;
+      updateOnboarding(3);
       setPetState('idle');
       reconnectAttempts = 0;
       if (reconnectTimer) {
@@ -804,6 +873,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     updateConnectionHealth({ connectionType: 'unknown', speed: 0 });
     setPetState('transferring');
+    updateOnboarding(4);
     dropZone.classList.add('hidden');
     completedCard.classList.add('hidden');
     progressCard.classList.remove('hidden');
@@ -866,6 +936,7 @@ document.addEventListener('DOMContentLoaded', () => {
     recordNetworkHealth('completed');
     applyPendingPwaUpdate();
     setPetState('idle');
+    updateOnboarding(4, { complete: true });
     progressCard.classList.add('hidden');
     networkDiagnostics.classList.add('hidden');
     completedCard.classList.remove('hidden');
@@ -972,12 +1043,19 @@ document.addEventListener('DOMContentLoaded', () => {
     socketManager.generateCode();
   });
 
+  if (btnToggleOnboarding) {
+    btnToggleOnboarding.addEventListener('click', () => {
+      setOnboardingCompact(!onboardingGuide.classList.contains('is-compact'), true);
+    });
+  }
+
   btnJoin.addEventListener('click', () => {
     const code = joinCodeInput.value.trim();
     if (code.length !== 4) {
       showToast(translate('invalid_code'));
       return;
     }
+    updateOnboarding(2);
     socketManager.joinCode(code);
   });
 
@@ -995,6 +1073,7 @@ document.addEventListener('DOMContentLoaded', () => {
   btnResetTransfer.addEventListener('click', () => {
     completedCard.classList.add('hidden');
     dropZone.classList.remove('hidden');
+    updateOnboarding(3);
     
     // Revoke object URL to free memory
     if (btnDownload.href && btnDownload.href.startsWith('blob:')) {
@@ -1134,6 +1213,7 @@ document.addEventListener('DOMContentLoaded', () => {
     trackAnalytics('app_open', {
       entry: new URLSearchParams(window.location.search).has('code') ? 'pairing_link' : 'direct'
     });
+    initializeOnboarding();
     socketManager.connect();
     restoreSharedFiles();
     registerServiceWorker();
@@ -1162,6 +1242,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     console.log('Found query parameter code:', codeParam);
     joinCodeInput.value = codeParam;
+    updateOnboarding(2);
     setTimeout(() => {
       socketManager.joinCode(codeParam);
       window.history.replaceState({}, document.title, window.location.pathname);

@@ -46,6 +46,22 @@
 
     <!-- MAIN VIEWS -->
     <section class="card-glass">
+      <section id="onboarding-guide" class="onboarding-guide" aria-label="Transfer guide" data-i18n-aria="onboarding_aria">
+        <div class="onboarding-guide-header">
+          <div class="onboarding-guide-summary" aria-live="polite">
+            <span id="onboarding-progress" class="onboarding-progress">Step 1 of 4</span>
+            <strong id="onboarding-current-title">Open AirDows on both devices</strong>
+          </div>
+          <button id="btn-toggle-onboarding" class="onboarding-toggle" type="button" aria-expanded="true" aria-label="Hide guide" title="Hide guide">×</button>
+        </div>
+        <ol class="onboarding-steps">
+          <li class="is-current" data-onboarding-step="1"><span>01</span><div><strong data-i18n="onboarding_open">Open</strong><small data-i18n="onboarding_open_desc">AirDows on both devices</small></div></li>
+          <li data-onboarding-step="2"><span>02</span><div><strong data-i18n="onboarding_connect">Connect</strong><small data-i18n="onboarding_connect_desc">Scan the QR or enter the temporary code</small></div></li>
+          <li data-onboarding-step="3"><span>03</span><div><strong data-i18n="onboarding_choose">Choose</strong><small data-i18n="onboarding_choose_desc">Select or drop your files</small></div></li>
+          <li data-onboarding-step="4"><span>04</span><div><strong data-i18n="onboarding_receive">Receive</strong><small data-i18n="onboarding_receive_desc">Keep both devices active</small></div></li>
+        </ol>
+        <p id="onboarding-hint" class="onboarding-hint">Open this same page on the device you want to connect</p>
+      </section>
       
       <!-- 1. SETUP / PAIRING SCREEN -->
       <div id="setup-view" class="view">
@@ -288,6 +304,28 @@
         send_desc: "Enter the 4-digit pairing code displayed on the receiving device to establish a direct connection.",
         join_placeholder: "Enter 4-Digit Code",
         btn_join: "Connect Device",
+        onboarding_aria: "AirDows transfer guide",
+        onboarding_progress: "Step {step} of 4",
+        onboarding_open: "Open",
+        onboarding_open_desc: "AirDows on both devices",
+        onboarding_connect: "Connect",
+        onboarding_connect_desc: "Scan the QR or enter the temporary code",
+        onboarding_choose: "Choose",
+        onboarding_choose_desc: "Select or drop your files",
+        onboarding_receive: "Receive",
+        onboarding_receive_desc: "Keep both devices active",
+        onboarding_step_1_title: "Open AirDows on both devices",
+        onboarding_step_1_hint: "Open this same page on the device you want to connect",
+        onboarding_step_2_title: "Connect the devices",
+        onboarding_step_2_hint: "Scan the QR code or enter the four-digit temporary code",
+        onboarding_step_3_title: "Choose what you want to transfer",
+        onboarding_step_3_hint: "The connection is ready. Select files or drag them into AirDows",
+        onboarding_step_4_title: "Keep both devices active",
+        onboarding_step_4_hint: "AirDows is moving the file. Keep both screens active until it arrives",
+        onboarding_complete_title: "Transfer completed",
+        onboarding_complete_hint: "The file arrived. You can transfer another one without reconnecting",
+        onboarding_hide: "Hide guide",
+        onboarding_show: "Show guide",
         shared_file_ready: "1 file ready",
         shared_files_ready: "{count} files ready",
         shared_files_connect_hint: "Connect another device to send",
@@ -370,6 +408,28 @@
         send_desc: "Introduce el código de emparejamiento de 4 dígitos que aparece en el dispositivo receptor para establecer una conexión directa.",
         join_placeholder: "Introduce el código de 4 dígitos",
         btn_join: "Conectar dispositivo",
+        onboarding_aria: "Guía de transferencia de AirDows",
+        onboarding_progress: "Paso {step} de 4",
+        onboarding_open: "Abre",
+        onboarding_open_desc: "AirDows en ambos dispositivos",
+        onboarding_connect: "Conecta",
+        onboarding_connect_desc: "Escanea el QR o escribe el código temporal",
+        onboarding_choose: "Elige",
+        onboarding_choose_desc: "Selecciona o suelta tus archivos",
+        onboarding_receive: "Recibe",
+        onboarding_receive_desc: "Mantén ambos dispositivos activos",
+        onboarding_step_1_title: "Abre AirDows en ambos dispositivos",
+        onboarding_step_1_hint: "Abre esta misma página en el dispositivo que quieres conectar",
+        onboarding_step_2_title: "Conecta los dispositivos",
+        onboarding_step_2_hint: "Escanea el QR o introduce el código temporal de cuatro dígitos",
+        onboarding_step_3_title: "Elige lo que quieres transferir",
+        onboarding_step_3_hint: "La conexión está lista. Selecciona archivos o arrástralos dentro de AirDows",
+        onboarding_step_4_title: "Mantén ambos dispositivos activos",
+        onboarding_step_4_hint: "AirDows está moviendo el archivo. Mantén ambas pantallas activas hasta que llegue",
+        onboarding_complete_title: "Transferencia completada",
+        onboarding_complete_hint: "El archivo llegó. Puedes transferir otro sin volver a conectar",
+        onboarding_hide: "Ocultar guía",
+        onboarding_show: "Mostrar guía",
         shared_file_ready: "1 archivo listo",
         shared_files_ready: "{count} archivos listos",
         shared_files_connect_hint: "Conecta otro dispositivo para enviarlo",
@@ -459,6 +519,10 @@
       document.querySelectorAll('[data-i18n-title]').forEach(el => {
         const key = el.getAttribute('data-i18n-title');
         if (i18n[currentLang][key]) el.title = i18n[currentLang][key];
+      });
+      document.querySelectorAll('[data-i18n-aria]').forEach(el => {
+        const key = el.getAttribute('data-i18n-aria');
+        if (i18n[currentLang][key]) el.setAttribute('aria-label', i18n[currentLang][key]);
       });
       if (i18n[currentLang].title) document.title = i18n[currentLang].title;
     }
