@@ -19,17 +19,31 @@ const app = express();
 // The production host sits behind a reverse proxy and forwards the client IP.
 app.set('trust proxy', 1);
 const server = http.createServer(app);
+
+// Secure CORS configuration: restrict to same origin or configured hosts
+const getAllowedOrigins = () => {
+  const envOrigins = process.env.ALLOWED_ORIGINS || '';
+  const origins = envOrigins ? envOrigins.split(',').map(o => o.trim()).filter(Boolean) : [];
+  
+  // In development, allow localhost; in production, require explicit configuration
+  if (process.env.NODE_ENV !== 'production') {
+    origins.push('http://localhost:3000', 'http://localhost:5173', 'http://127.0.0.1:3000', 'http://127.0.0.1:5173');
+  }
+  
+  return origins.length > 0 ? origins : ['*'];
+};
+
 const io = new Server(server, {
   cors: {
-    origin: "*",
-    methods: ["GET", "POST"]
+    origin: getAllowedOrigins(),
+    methods: ["GET", "POST"],
+    credentials: true,
+    maxAge: 3600
   }
 });
 
 const PORT = process.env.PORT || 3000;
 const ROOM_EXPIRATION_MS = 180000;
-const JOIN_ATTEMPT_WINDOW_MS = 60 * 1000;
-const MAX_JOIN_ATTEMPTS = 5;
 const ICE_CONFIG_CACHE_MS = 10 * 60 * 1000;
 const NETWORK_HEALTH_WINDOW_MS = 60 * 1000;
 const MAX_NETWORK_HEALTH_EVENTS = 12;
@@ -60,6 +74,35 @@ const apiLimiter = rateLimit({
   legacyHeaders: false,
   message: 'Too many requests from this IP. Please try again in a minute.'
 });
+
+// Socket.io specific rate limiters for security-sensitive operations
+const socketRateLimiters = {
+  generateCode: new Map(), // Track per-socket generation attempts
+  joinCode: new Map()      // Track per-socket join attempts
+};
+
+function checkSocketRateLimit(socketId, operation, maxAttempts = 10, windowMs = 60000) {
+  const now = Date.now();
+  const limiter = socketRateLimiters[operation];
+  
+  if (!limiter.has(socketId)) {
+    limiter.set(socketId, { count: 1, startTime: now });
+    return true;
+  }
+  
+  const attempt = limiter.get(socketId);
+  if (now - attempt.startTime > windowMs) {
+    limiter.set(socketId, { count: 1, startTime: now });
+    return true;
+  }
+  
+  attempt.count += 1;
+  if (attempt.count > maxAttempts) {
+    return false;
+  }
+  
+  return true;
+}
 
 function readEnvNumber(name, fallback, min, max) {
   const value = Number.parseInt(process.env[name] || '', 10);
@@ -525,6 +568,13 @@ io.on('connection', (socket) => {
 
   // 1. Generate a new pairing code
   socket.on('generate-code', () => {
+    // Rate limit: max 10 code generations per socket per 60 seconds
+    if (!checkSocketRateLimit(socket.id, 'generateCode', 10, 60000)) {
+      socket.emit('error-message', { message: 'Too many code generation attempts. Please wait a minute.' });
+      console.warn(`Socket ${socket.id} exceeded code generation rate limit`);
+      return;
+    }
+
     leaveAllRooms(socket);
 
     const code = generateUniqueCode();
@@ -550,37 +600,23 @@ io.on('connection', (socket) => {
 
   // 2. Join an existing pairing code
   socket.on('join-code', (payload = {}) => {
-    const now = Date.now();
-    const attempts = socket.data.joinAttempts || { count: 0, startedAt: now };
-    if (now - attempts.startedAt > JOIN_ATTEMPT_WINDOW_MS) {
-      attempts.count = 0;
-      attempts.startedAt = now;
-    }
-
-    const rejectJoin = (message) => {
-      attempts.count += 1;
-      socket.data.joinAttempts = attempts;
-      socket.emit('error-message', {
-        message: attempts.count >= MAX_JOIN_ATTEMPTS
-          ? 'Too many pairing attempts. Please wait a minute.'
-          : message
-      });
-    };
-
-    if (attempts.count >= MAX_JOIN_ATTEMPTS) {
+    // Rate limit: max 15 join attempts per socket per 60 seconds
+    if (!checkSocketRateLimit(socket.id, 'joinCode', 15, 60000)) {
       socket.emit('error-message', { message: 'Too many pairing attempts. Please wait a minute.' });
+      console.warn(`Socket ${socket.id} exceeded join code rate limit`);
       return;
     }
 
     const cleanCode = String(payload.code || '').trim();
     
+    // Strict validation: must be exactly 4 digits, no exceptions
     if (!/^\d{4}$/.test(cleanCode)) {
-      rejectJoin('Invalid code. Enter a 4-digit code.');
+      socket.emit('error-message', { message: 'Invalid code. Enter a 4-digit code.' });
       return;
     }
     
     if (!activeRooms.has(cleanCode)) {
-      rejectJoin('Invalid code. Code does not exist.');
+      socket.emit('error-message', { message: 'Invalid code. Code does not exist.' });
       return;
     }
 
@@ -588,19 +624,18 @@ io.on('connection', (socket) => {
     const occupants = room.occupants;
 
     if (occupants.has(socket.id)) {
-      rejectJoin('You are already in this room.');
+      socket.emit('error-message', { message: 'You are already in this room.' });
       return;
     }
 
     if (occupants.size >= 2) {
-      rejectJoin('This room is full. Max 2 devices allowed.');
+      socket.emit('error-message', { message: 'This room is full. Max 2 devices allowed.' });
       return;
     }
 
     leaveAllRooms(socket);
 
     occupants.add(socket.id);
-    socket.data.joinAttempts = { count: 0, startedAt: now };
     socket.join(cleanCode);
     clearTimeout(room.timeout);
     console.log(`Socket ${socket.id} joined room ${cleanCode}`);
