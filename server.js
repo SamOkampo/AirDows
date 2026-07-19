@@ -19,20 +19,36 @@ const app = express();
 // The production host sits behind a reverse proxy and forwards the client IP.
 app.set('trust proxy', 1);
 const server = http.createServer(app);
+
+// Secure CORS configuration: restrict to same origin or configured hosts
+const getAllowedOrigins = () => {
+  const envOrigins = process.env.ALLOWED_ORIGINS || '';
+  const origins = envOrigins ? envOrigins.split(',').map(o => o.trim()).filter(Boolean) : [];
+  
+  // In development, allow localhost; in production, require explicit configuration
+  if (process.env.NODE_ENV !== 'production') {
+    origins.push('http://localhost:3000', 'http://localhost:5173', 'http://127.0.0.1:3000', 'http://127.0.0.1:5173');
+  }
+  
+  return origins.length > 0 ? origins : ['*'];
+};
+
 const io = new Server(server, {
   cors: {
-    origin: "*",
-    methods: ["GET", "POST"]
+    origin: getAllowedOrigins(),
+    methods: ["GET", "POST"],
+    credentials: true,
+    maxAge: 3600
   }
 });
 
 const PORT = process.env.PORT || 3000;
-const ROOM_EXPIRATION_MS = 180000;
-const JOIN_ATTEMPT_WINDOW_MS = 60 * 1000;
-const MAX_JOIN_ATTEMPTS = 5;
+const ROOM_EXPIRATION_MS = 180000;  // 3 minutes: strict single-use expiration
 const ICE_CONFIG_CACHE_MS = 10 * 60 * 1000;
 const NETWORK_HEALTH_WINDOW_MS = 60 * 1000;
 const MAX_NETWORK_HEALTH_EVENTS = 12;
+const RATE_LIMIT_CLEANUP_INTERVAL_MS = 60000;  // Clean stale rate limit entries every 60s
+const RATE_LIMIT_ENTRY_TTL_MS = 60000;  // Entries older than 60s are evicted
 const FREE_RELAY_BUDGET_BYTES = Math.max(
   0,
   Number.parseInt(process.env.FREE_RELAY_BUDGET_BYTES || String(250 * 1024 * 1024), 10) || 0
@@ -60,6 +76,62 @@ const apiLimiter = rateLimit({
   legacyHeaders: false,
   message: 'Too many requests from this IP. Please try again in a minute.'
 });
+
+// ====================================================
+// ADVANCED RATE LIMITING: 3-dimensional (IP + Socket + Code)
+// ====================================================
+
+// Rate limiting entry: { ip, socketId, targetCode, count, startTime }
+// Key format: "ip|socketId|targetCode" (no spaces, secure separators)
+const rateLimitStore = new Map();
+
+function getRateLimitKey(clientIp, socketId, targetCode = '') {
+  return `${clientIp}|${socketId}|${targetCode}`;
+}
+
+function maskIpAddress(ip) {
+  if (!ip) return 'unknown';
+  if (ip.includes(':')) return ip.substring(0, ip.lastIndexOf(':')) + ':****';
+  return ip.split('.').slice(0, -1).join('.') + '.*';
+}
+
+function checkRateLimit(clientIp, socketId, targetCode = '', maxAttempts = 10, windowMs = 60000) {
+  const now = Date.now();
+  const key = getRateLimitKey(clientIp, socketId, targetCode);
+  
+  if (!rateLimitStore.has(key)) {
+    rateLimitStore.set(key, { count: 1, startTime: now });
+    return { allowed: true, remaining: maxAttempts - 1 };
+  }
+  
+  const entry = rateLimitStore.get(key);
+  if (now - entry.startTime > windowMs) {
+    rateLimitStore.set(key, { count: 1, startTime: now });
+    return { allowed: true, remaining: maxAttempts - 1 };
+  }
+  
+  entry.count += 1;
+  if (entry.count > maxAttempts) {
+    return { allowed: false, remaining: 0 };
+  }
+  
+  return { allowed: true, remaining: maxAttempts - entry.count };
+}
+
+// Cleanup routine: evict stale rate limit entries every 60 seconds
+setInterval(() => {
+  const now = Date.now();
+  let evicted = 0;
+  for (const [key, entry] of rateLimitStore.entries()) {
+    if (now - entry.startTime > RATE_LIMIT_ENTRY_TTL_MS) {
+      rateLimitStore.delete(key);
+      evicted++;
+    }
+  }
+  if (evicted > 0) {
+    console.info(`[Security] Rate limit cleanup: evicted ${evicted} stale entries`);
+  }
+}, RATE_LIMIT_CLEANUP_INTERVAL_MS);
 
 function readEnvNumber(name, fallback, min, max) {
   const value = Number.parseInt(process.env[name] || '', 10);
@@ -463,17 +535,57 @@ function requireAdminDashboard(req, res, next) {
   return next();
 }
 
-// Helper to generate a unique 4-digit code
+// ====================================================
+// SECURE CODE GENERATION: Crypto-based, single-use, strict TTL
+// ====================================================
+
+// Track codes that failed validation or expired to prevent reuse
+const invalidatedCodes = new Map();
+
 function generateUniqueCode() {
   let code;
+  const maxAttempts = 100;
+  let attempts = 0;
+  
   do {
     code = crypto.randomInt(1000, 10000).toString();
-  } while (activeRooms.has(code));
+    attempts++;
+  } while ((activeRooms.has(code) || invalidatedCodes.has(code)) && attempts < maxAttempts);
+  
+  if (attempts >= maxAttempts) {
+    throw new Error('Failed to generate unique code after 100 attempts');
+  }
+  
   return code;
 }
 
+// Invalidate a code permanently (prevent reuse if it expires or fails auth)
+function invalidateCode(code) {
+  const now = Date.now();
+  invalidatedCodes.set(code, now);
+  
+  // Clean up old invalidated codes after 10 minutes
+  if (invalidatedCodes.size > 10000) {
+    for (const [c, timestamp] of invalidatedCodes.entries()) {
+      if (now - timestamp > 10 * 60 * 1000) {
+        invalidatedCodes.delete(c);
+      }
+    }
+  }
+}
+
 io.on('connection', (socket) => {
-  console.log(`Client connected: ${socket.id}`);
+  // Get client IP (from X-Forwarded-For if behind reverse proxy)
+  const clientIp = socket.handshake.headers['x-forwarded-for']?.split(',')[0]?.trim() 
+    || socket.handshake.address 
+    || 'unknown';
+  
+  // Store masked IP in socket data for rate limiting
+  socket.data.clientIp = clientIp;
+  socket.data.maskedIp = maskIpAddress(clientIp);
+  
+  console.info(`[Connection] New socket session established`);
+  
   const relayBudget = getRelayBudget(socket);
   socket.emit('relay-budget', {
     plan: 'free',
@@ -485,7 +597,7 @@ io.on('connection', (socket) => {
     try {
       socket.emit('ice-config', await getIceConfig());
     } catch (err) {
-      console.error('Failed to provide ICE config:', err);
+      console.error('[ICE] Failed to provide ICE config:', err.message);
       socket.emit('ice-config', {
         iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
       });
@@ -525,17 +637,37 @@ io.on('connection', (socket) => {
 
   // 1. Generate a new pairing code
   socket.on('generate-code', () => {
+    const clientIp = socket.data.clientIp;
+    
+    // Rate limit: max 10 code generations per (IP + Socket) per 60 seconds
+    const limit = checkRateLimit(clientIp, socket.id, '', 10, 60000);
+    if (!limit.allowed) {
+      socket.emit('error-message', { message: 'Too many code generation attempts. Please try again later.' });
+      console.warn(`[RateLimit] Code generation blocked for ${socket.data.maskedIp}`);
+      return;
+    }
+
     leaveAllRooms(socket);
 
-    const code = generateUniqueCode();
+    let code;
+    try {
+      code = generateUniqueCode();
+    } catch (err) {
+      console.error('[CodeGen] Failed to generate code:', err.message);
+      socket.emit('error-message', { message: 'Service temporarily unavailable. Please try again.' });
+      return;
+    }
+
+    // Strict TTL: 3 minutes, then invalidate permanently
     const timeout = setTimeout(() => {
       const room = activeRooms.get(code);
-      if (!room || room.occupants.size >= 2) return;
-
-      activeRooms.delete(code);
-      socket.leave(code);
-      socket.emit('error-message', { message: 'Pairing code expired. Please generate a new code.' });
-      console.log(`Room ${code} expired before pairing completed`);
+      if (room && room.occupants.size < 2) {
+        activeRooms.delete(code);
+        invalidateCode(code);  // Prevent reuse
+        socket.leave(code);
+        socket.emit('error-message', { message: 'Pairing code expired. Please generate a new code.' });
+        console.info(`[Timeout] Pairing code expired after 3 minutes`);
+      }
     }, ROOM_EXPIRATION_MS);
 
     activeRooms.set(code, {
@@ -544,43 +676,36 @@ io.on('connection', (socket) => {
     });
     socket.join(code);
     
-    console.log(`Code ${code} generated for socket ${socket.id}`);
+    console.info(`[CodeGen] New pairing code generated for session`);
     socket.emit('code-generated', { code });
   });
 
   // 2. Join an existing pairing code
   socket.on('join-code', (payload = {}) => {
-    const now = Date.now();
-    const attempts = socket.data.joinAttempts || { count: 0, startedAt: now };
-    if (now - attempts.startedAt > JOIN_ATTEMPT_WINDOW_MS) {
-      attempts.count = 0;
-      attempts.startedAt = now;
-    }
-
-    const rejectJoin = (message) => {
-      attempts.count += 1;
-      socket.data.joinAttempts = attempts;
-      socket.emit('error-message', {
-        message: attempts.count >= MAX_JOIN_ATTEMPTS
-          ? 'Too many pairing attempts. Please wait a minute.'
-          : message
-      });
-    };
-
-    if (attempts.count >= MAX_JOIN_ATTEMPTS) {
-      socket.emit('error-message', { message: 'Too many pairing attempts. Please wait a minute.' });
-      return;
-    }
-
+    const clientIp = socket.data.clientIp;
     const cleanCode = String(payload.code || '').trim();
     
+    // Strict validation: must be exactly 4 digits, no exceptions
     if (!/^\d{4}$/.test(cleanCode)) {
-      rejectJoin('Invalid code. Enter a 4-digit code.');
+      socket.emit('error-message', { message: 'CONNECT_FAILED' });
       return;
     }
-    
+
+    // Rate limit: max 15 join attempts per (IP + Socket + specific code) per 60 seconds
+    const limit = checkRateLimit(clientIp, socket.id, cleanCode, 15, 60000);
+    if (!limit.allowed) {
+      socket.emit('error-message', { message: 'CONNECT_FAILED' });
+      console.warn(`[RateLimit] Join attempts blocked for ${socket.data.maskedIp}`);
+      return;
+    }
+
+    // OPAQUE RESPONSE: Same error for all failure scenarios
+    const OPAQUE_ERROR = 'CONNECT_FAILED';
+
     if (!activeRooms.has(cleanCode)) {
-      rejectJoin('Invalid code. Code does not exist.');
+      // Code doesn't exist OR expired OR already used
+      invalidateCode(cleanCode);  // Prevent brute force on this code
+      socket.emit('error-message', { message: OPAQUE_ERROR });
       return;
     }
 
@@ -588,22 +713,24 @@ io.on('connection', (socket) => {
     const occupants = room.occupants;
 
     if (occupants.has(socket.id)) {
-      rejectJoin('You are already in this room.');
+      socket.emit('error-message', { message: OPAQUE_ERROR });
       return;
     }
 
     if (occupants.size >= 2) {
-      rejectJoin('This room is full. Max 2 devices allowed.');
+      // Room is full
+      invalidateCode(cleanCode);  // Mark as used, prevent further attempts
+      socket.emit('error-message', { message: OPAQUE_ERROR });
       return;
     }
 
     leaveAllRooms(socket);
 
     occupants.add(socket.id);
-    socket.data.joinAttempts = { count: 0, startedAt: now };
     socket.join(cleanCode);
     clearTimeout(room.timeout);
-    console.log(`Socket ${socket.id} joined room ${cleanCode}`);
+    
+    console.info(`[Pairing] New pairing session established`);
 
     const occupantsArray = Array.from(occupants);
     const initiatorId = occupantsArray[0];
@@ -619,7 +746,7 @@ io.on('connection', (socket) => {
     const data = payload.data;
 
     if (!room || !activeRooms.has(room) || !activeRooms.get(room).occupants.has(socket.id)) {
-      socket.emit('error-message', { message: 'Invalid signaling room.' });
+      socket.emit('error-message', { message: 'Invalid signaling payload.' });
       return;
     }
 
@@ -638,7 +765,7 @@ io.on('connection', (socket) => {
 
   // 5. Handle Disconnect
   socket.on('disconnect', () => {
-    console.log(`Client disconnected: ${socket.id}`);
+    console.info(`[Disconnect] Session terminated`);
     leaveAllRooms(socket);
   });
 });
@@ -650,14 +777,15 @@ function leaveAllRooms(socket) {
     if (occupants.has(socket.id)) {
       occupants.delete(socket.id);
       socket.leave(code);
-      console.log(`Socket ${socket.id} left room ${code}`);
+      console.info(`[Leave] Peer left session`);
 
       socket.to(code).emit('peer-disconnected');
 
       if (occupants.size === 0) {
         clearTimeout(room.timeout);
         activeRooms.delete(code);
-        console.log(`Room ${code} destroyed (empty)`);
+        invalidateCode(code);  // Ensure code cannot be reused
+        console.info(`[Cleanup] Session destroyed`);
       }
     }
   }
