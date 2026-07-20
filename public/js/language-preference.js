@@ -62,9 +62,16 @@
         const nextLanguage = normalizeLanguage(button.dataset.language);
         if (!nextLanguage || nextLanguage === getLanguage()) return;
         setLanguage(nextLanguage);
+        document.documentElement.lang = nextLanguage;
+        syncLanguageControls(nextLanguage);
         const nextUrl = new URL(window.location.href);
         nextUrl.searchParams.set('lang', nextLanguage);
-        window.location.assign(`${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`);
+        history.replaceState(null, '', `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`);
+        window.dispatchEvent(
+          new CustomEvent('airdows:language-change', {
+            detail: nextLanguage
+          })
+        );
       });
     });
   }
