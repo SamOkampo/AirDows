@@ -530,29 +530,31 @@
     let currentLang = window.airDowsLanguage?.get() || ((navigator.language || 'en').startsWith('es') ? 'es' : 'en');
 
     function t(key) {
-      return i18n[currentLang][key] || key;
+      const lang = i18n[currentLang] || i18n.en;
+      return (lang && lang[key]) || key;
     }
 
     function translatePage() {
+      const lang = i18n[currentLang] || i18n.en;
       document.documentElement.lang = currentLang;
       document.querySelectorAll('[data-i18n]').forEach(el => {
         const key = el.getAttribute('data-i18n');
-        if (i18n[currentLang][key]) el.textContent = i18n[currentLang][key];
+        if (lang[key]) el.textContent = lang[key];
       });
       document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
         const key = el.getAttribute('data-i18n-placeholder');
-        if (i18n[currentLang][key]) el.placeholder = i18n[currentLang][key];
+        if (lang[key]) el.placeholder = lang[key];
       });
       document.querySelectorAll('[data-i18n-title]').forEach(el => {
         const key = el.getAttribute('data-i18n-title');
-        if (i18n[currentLang][key]) el.title = i18n[currentLang][key];
+        if (lang[key]) el.title = lang[key];
       });
       document.querySelectorAll('[data-i18n-aria]').forEach(el => {
         const key = el.getAttribute('data-i18n-aria');
-        if (i18n[currentLang][key]) el.setAttribute('aria-label', i18n[currentLang][key]);
+        if (lang[key]) el.setAttribute('aria-label', lang[key]);
       });
       window.airDowsLanguage?.syncControls(currentLang);
-      if (i18n[currentLang].title) document.title = i18n[currentLang].title;
+      if (lang.title) document.title = lang.title;
     }
 
     // Bridge for app.js dynamic strings
@@ -632,7 +634,10 @@
       translatePage();
       setupDynamicBridge();
       window.addEventListener('airdows:language-change', (event) => {
-        currentLang = event.detail || window.airDowsLanguage?.get() || currentLang;
+        const candidate = event?.detail || window.airDowsLanguage?.get();
+        if (candidate && i18n[candidate]) {
+          currentLang = candidate;
+        }
         translatePage();
       });
     });
