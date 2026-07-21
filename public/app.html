@@ -631,6 +631,10 @@
     document.addEventListener('DOMContentLoaded', () => {
       translatePage();
       setupDynamicBridge();
+      window.addEventListener('airdows:language-change', (event) => {
+        currentLang = event.detail || window.airDowsLanguage?.get() || currentLang;
+        translatePage();
+      });
     });
   </script>
 </body>
