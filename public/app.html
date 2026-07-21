@@ -637,7 +637,12 @@
         const candidate = event?.detail || window.airDowsLanguage?.get();
         if (candidate && i18n[candidate]) {
           currentLang = candidate;
+        } else {
+          // Fallback: prefer stored preference if valid, otherwise default to English
+          const stored = window.airDowsLanguage?.get();
+          currentLang = (stored && i18n[stored]) ? stored : 'en';
         }
+        // Ensure document.lang and internal state stay in sync
         translatePage();
       });
     });
