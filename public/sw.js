@@ -1,4 +1,6 @@
-const CACHE_NAME = 'airdows-shell-v14';
+importScripts('/js/pairing-link-privacy.js');
+
+const CACHE_NAME = 'airdows-shell-v15';
 const APP_SHELL = [
   '/',
   '/app',
@@ -16,6 +18,7 @@ const APP_SHELL = [
   '/js/webrtc-manager.js',
   '/js/qrcode-generator.js',
   '/js/qr-manager.js',
+  '/js/pairing-link-privacy.js',
   '/js/local-ai-manager.js',
   '/js/runtime-config.js'
 ];
@@ -61,15 +64,24 @@ self.addEventListener('fetch', (event) => {
 });
 
 async function handleGetRequest(request) {
+  const cachePolicy = PairingLinkPrivacy.getSafeCacheRequestUrl(request.url, self.location.origin);
+  const cacheRequest = cachePolicy.sensitive
+    ? new Request(cachePolicy.url, {
+      headers: request.headers,
+      credentials: request.credentials,
+      redirect: 'follow'
+    })
+    : request;
+
   try {
-    const response = await fetch(request);
+    const response = await fetch(cacheRequest);
     if (response.ok && request.url.startsWith(self.location.origin)) {
       const cache = await caches.open(CACHE_NAME);
-      cache.put(request, response.clone()).catch(() => {});
+      cache.put(cacheRequest, response.clone()).catch(() => {});
     }
     return response;
   } catch (error) {
-    const cachedResponse = await caches.match(request);
+    const cachedResponse = await caches.match(cacheRequest);
     if (cachedResponse) return cachedResponse;
 
     if (request.mode === 'navigate') {

@@ -11,6 +11,11 @@ const {
   resolveClientIp,
   PairingSecurity
 } = require('./pairing-security');
+const {
+  getAppPrivacyHeaders,
+  getLegacyAppRedirect,
+  sanitizePairingUrl
+} = require('./public/js/pairing-link-privacy');
 
 if (typeof process.loadEnvFile === 'function') {
   const localEnvPath = path.join(__dirname, '.env');
@@ -779,7 +784,9 @@ app.use((req, res, next) => {
     return res.redirect(301, '/');
   }
   if (req.path === '/app.html') {
-    return res.redirect(301, `/app${req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : ''}`);
+    const redirect = getLegacyAppRedirect(req.originalUrl, 'http://localhost');
+    res.set(getAppPrivacyHeaders(redirect.sensitive));
+    return res.redirect(redirect.sensitive ? 302 : 301, redirect.location);
   }
   const cleanPublicRoute = Object.entries(publicPages)
     .find(([, fileName]) => req.path === `/${fileName}`)?.[0];
@@ -789,6 +796,9 @@ app.use((req, res, next) => {
 
 // 1. RUTA LIMPIA PARA LA APP: Responde en /app usando el archivo app.html
 app.get('/app', (req, res) => {
+  // A legacy ?code= request may reach the Railway edge; new fragment links never send the code here.
+  const privacy = sanitizePairingUrl(req.originalUrl, 'http://localhost');
+  res.set(getAppPrivacyHeaders(privacy.hadCodeParameter));
   res.sendFile(path.join(__dirname, 'public', 'app.html')); 
 });
 

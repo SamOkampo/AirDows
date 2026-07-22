@@ -1,3 +1,5 @@
+const pairingLinkBootstrap = window.PairingLinkPrivacy.consumeBootstrap();
+
 document.addEventListener('DOMContentLoaded', () => {
   // 1. Initialize Managers
   const socketManager = new SocketManager();
@@ -100,12 +102,18 @@ document.addEventListener('DOMContentLoaded', () => {
   let lastTrackedRoute = 'unknown';
   let onboardingStep = 1;
   let onboardingComplete = false;
+  let pendingAutoJoinCode = pairingLinkBootstrap.code;
+  const appOpenEntry = pairingLinkBootstrap.entry;
+  let autoJoinAttempted = false;
+  pairingLinkBootstrap.code = null;
 
   // --- HELPERS ---
   function trackAnalytics(eventName, properties = {}) {
     const sendEvent = () => {
       if (!window.umami || typeof window.umami.track !== 'function') return false;
-      window.umami.track(eventName, properties);
+      if (!window.PairingLinkPrivacy.isAllowedAnalyticsEvent(eventName)) return false;
+      const safeProperties = window.PairingLinkPrivacy.sanitizeAnalyticsProperties(eventName, properties);
+      window.umami.track(eventName, safeProperties);
       return true;
     };
 
@@ -697,6 +705,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // --- SOCKET.IO EVENT HANDLERS ---
   socketManager.onConnect = () => {
     console.log('Socket.io connected');
+    submitPendingAutoJoin();
     
     // Set a safety timeout: if no ICE config arrives in 5 seconds, use a default fallback
     setTimeout(() => {
@@ -744,7 +753,7 @@ document.addEventListener('DOMContentLoaded', () => {
     btnGenerate.classList.add('hidden');
 
     // Generate QR Code containing join URL
-    const joinUrl = `${window.location.origin}/app?code=${code}`;
+    const joinUrl = window.PairingLinkPrivacy.buildPairingLink(window.location.origin, code);
     qrcodeDiv.innerHTML = '';
     if (typeof QRManager === 'undefined') {
       showToast(translate('qr_library_fail'));
@@ -754,7 +763,7 @@ document.addEventListener('DOMContentLoaded', () => {
   };
 
   socketManager.onPaired = ({ role, peerId, code }) => {
-    console.log(`Paired as ${role} in room ${code}`);
+    console.log('Pairing session established');
     setPetState('connecting');
     roomCode = code;
     p2pConnected = false;
@@ -1221,14 +1230,13 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     trackAnalytics('app_open', {
-      entry: new URLSearchParams(window.location.search).has('code') ? 'pairing_link' : 'direct'
+      entry: appOpenEntry
     });
     initializeOnboarding();
     socketManager.connect();
     restoreSharedFiles();
     registerServiceWorker();
     setupInstallPrompt();
-    autoJoinFromUrl();
   }
 
   window.addEventListener('offline', () => {
@@ -1245,18 +1253,16 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  function autoJoinFromUrl() {
-    const urlParams = new URLSearchParams(window.location.search);
-    const codeParam = urlParams.get('code');
-    if (!codeParam || codeParam.length !== 4) return;
+  function submitPendingAutoJoin() {
+    if (autoJoinAttempted) return;
+    autoJoinAttempted = true;
 
-    console.log('Found query parameter code:', codeParam);
-    joinCodeInput.value = codeParam;
+    const code = pendingAutoJoinCode;
+    pendingAutoJoinCode = null;
+    if (!code) return;
+
     updateOnboarding(2);
-    setTimeout(() => {
-      socketManager.joinCode(codeParam);
-      window.history.replaceState({}, document.title, window.location.pathname);
-    }, 500);
+    socketManager.joinCode(code);
   }
 
   bootstrapApplication();

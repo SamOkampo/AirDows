@@ -108,7 +108,7 @@ class WebRTCManager {
     this.startEncryptionSession().catch((err) => {
       console.warn('Application encryption unavailable. WebRTC transport encryption remains active:', err.message);
     });
-    console.log(`Initializing WebRTC as ${role} in room ${roomCode}`);
+    console.log(`Initializing WebRTC as ${role}`);
 
     this.createPeerConnection();
     this.flushPendingSignals();

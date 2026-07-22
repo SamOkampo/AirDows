@@ -34,7 +34,7 @@ class SocketManager {
     });
 
     this.socket.on('connect', () => {
-      console.log('Connected to signaling server:', this.socket.id);
+      console.log('Connected to signaling server');
       if (this.onConnect) this.onConnect();
       
       // Request ICE config immediately on connection
@@ -55,12 +55,12 @@ class SocketManager {
     });
 
     this.socket.on('code-generated', (data) => {
-      console.log('Pairing code generated:', data.code);
+      console.log('Pairing code generated');
       if (this.onCodeGenerated) this.onCodeGenerated(data.code);
     });
 
     this.socket.on('paired', (data) => {
-      console.log('Devices paired!', data);
+      console.log('Devices paired');
       if (this.onPaired) this.onPaired(data);
     });
 
