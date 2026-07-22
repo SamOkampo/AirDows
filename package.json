@@ -4,6 +4,7 @@
   "description": "An AirDrop clone using Node.js, Socket.io, and WebRTC for direct file sharing.",
   "main": "server.js",
   "scripts": {
+    "test": "node --test",
     "start": "node server.js",
     "native:sync": "npx cap sync android",
     "native:open": "npx cap open android",
