@@ -151,6 +151,10 @@ document.addEventListener('DOMContentLoaded', () => {
   let reconnectTimer = null;
   let reconnectAttempts = 0;
   const maxReconnectAttempts = 5;
+  let sessionRecoveryState = 'unpaired';
+  let recoveryCleanupStarted = false;
+  let preserveQueueAfterRecoveryFailure = false;
+  let activeSocketGeneration = 0;
   let activeTransferMode = 'idle';
   let transferIsActive = false;
   let wakeLock = null;
@@ -642,6 +646,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!item || item.status === 'done' || item.status === 'cancelled' || item.status === 'error') return;
 
     item.status = 'cancelled';
+    item.recoveryPending = false;
 
     if (activeQueueItem && activeQueueItem.id === id) {
       webrtcManager.cancelActiveTransfer();
@@ -664,6 +669,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       activeQueueItem = nextItem;
       nextItem.status = 'sending';
+      nextItem.recoveryPending = false;
       currentFileTransferSize = nextItem.file.size;
       renderQueue();
 
@@ -675,7 +681,11 @@ document.addEventListener('DOMContentLoaded', () => {
           nextItem.status = 'done';
         }
       } catch (err) {
-        if (err.name === 'TransferCancelledError' || nextItem.status === 'cancelled') {
+        if (nextItem.recoveryPending) {
+          nextItem.status = 'pending';
+          nextItem.recoveryPending = false;
+          if (!p2pConnected) break;
+        } else if (err.name === 'TransferCancelledError' || nextItem.status === 'cancelled') {
           nextItem.status = 'cancelled';
         } else if (err.name === 'ProRequiredError') {
           nextItem.status = 'error';
@@ -697,6 +707,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     isProcessingQueue = false;
     if (pwaUpdateDeferred) applyPendingPwaUpdate();
+    if (p2pConnected && transferQueue.some((item) => item.status === 'pending')) {
+      queueMicrotask(processQueue);
+    }
   }
 
   function appendHistoryItem(fileName, fileSize, type) {
@@ -767,8 +780,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // --- SOCKET.IO EVENT HANDLERS ---
   socketManager.onConnect = () => {
+    const recovering = sessionRecoveryState === 'signaling-disconnected' || sessionRecoveryState === 'recovering';
     console.log('Socket.io connected');
-    submitPendingAutoJoin();
+    if (!recovering) submitPendingAutoJoin();
     
     // Set a safety timeout: if no ICE config arrives in 5 seconds, use a default fallback
     setTimeout(() => {
@@ -779,7 +793,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         // Check if we were waiting to initialize
         if (pendingPairing) {
-          webrtcManager.initialize(pendingPairing.role, pendingPairing.code);
+          initializePairedConnection(pendingPairing);
           pendingPairing = null;
         }
       }
@@ -790,13 +804,17 @@ document.addEventListener('DOMContentLoaded', () => {
     webrtcManager.setIceConfig(config);
     if (pendingPairing) {
       console.log('ICE Config received, initializing pending WebRTC connection');
-      webrtcManager.initialize(pendingPairing.role, pendingPairing.code);
+      initializePairedConnection(pendingPairing);
       pendingPairing = null;
     }
   };
 
-  socketManager.onDisconnect = () => {
+  socketManager.onDisconnect = ({ recoverable = false } = {}) => {
     showToast(translate('socket_disconnect'));
+    if (recoverable && roomCode) {
+      beginSessionRecovery('signaling-disconnected');
+      return;
+    }
     resetApp();
   };
 
@@ -825,30 +843,40 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   };
 
-  socketManager.onPaired = ({ role, peerId, code }) => {
+  socketManager.onPaired = ({ role, peerId, code, recovered = false, connectionGeneration = 0 }) => {
     console.log('Pairing session established');
     setPetState('connecting');
     roomCode = code;
+    activeSocketGeneration = connectionGeneration;
     p2pConnected = false;
-    connectionEstablishedTracked = false;
-    trackAnalytics('room_joined', { role });
-    updateOnboarding(2);
+    if (!recovered) {
+      connectionEstablishedTracked = false;
+      trackAnalytics('room_joined', { role });
+      updateOnboarding(2);
+    }
 
     
     switchView('transfer');
     connectionStatusText.textContent = translate('conn_connecting');
     
-    // Reset file views
-    dropZone.classList.remove('hidden');
-    progressCard.classList.add('hidden');
-    completedCard.classList.add('hidden');
-    clipboardTextInput.value = '';
-    clipboardFeed.innerHTML = '';
-    transferQueue = [];
-    activeQueueItem = null;
-    isProcessingQueue = false;
-    applyPendingPwaUpdate();
-    renderQueue();
+    if (!recovered) {
+      // A fresh manual pairing starts clean unless a failed recovery deliberately preserved the queue.
+      dropZone.classList.remove('hidden');
+      progressCard.classList.add('hidden');
+      completedCard.classList.add('hidden');
+      clipboardTextInput.value = '';
+      clipboardFeed.innerHTML = '';
+      if (!preserveQueueAfterRecoveryFailure) transferQueue = [];
+      preserveQueueAfterRecoveryFailure = false;
+      activeQueueItem = null;
+      isProcessingQueue = false;
+      applyPendingPwaUpdate();
+      renderQueue();
+    } else {
+      completedCard.classList.add('hidden');
+      dropZone.classList.remove('hidden');
+      renderQueue();
+    }
 
     if (sharedFilesPending.length) {
       const filesToQueue = sharedFilesPending;
@@ -861,19 +889,39 @@ document.addEventListener('DOMContentLoaded', () => {
     // Initialize WebRTC connection (Check if we have config first)
     if (!webrtcManager.rtcConfig) {
       console.warn('Pairing happened before ICE config. Queuing initialization...');
-      pendingPairing = { role, code };
+      pendingPairing = { role, code, recovered };
     } else {
-      webrtcManager.initialize(role, code);
+      initializePairedConnection({ role, code, recovered });
     }
   };
 
-  socketManager.onSignal = (data) => {
+  socketManager.onSignal = (data, connectionGeneration) => {
+    if (activeSocketGeneration && connectionGeneration !== activeSocketGeneration) return;
     webrtcManager.handleSignal(data);
   };
 
-  socketManager.onPeerDisconnected = () => {
+  socketManager.onPeerDisconnected = ({ recoverable = false } = {}) => {
     showToast(translate('peer_disconnected'));
-    resetApp();
+    if (recoverable && roomCode) {
+      beginSessionRecovery('recovering');
+      return;
+    }
+    failSessionRecovery();
+  };
+
+  socketManager.onRecoveryStateChange = (state) => {
+    sessionRecoveryState = state;
+    if (state === 'signaling-disconnected' || state === 'recovering') {
+      beginSessionRecovery(state);
+    }
+  };
+
+  socketManager.onRecoveryWaiting = () => {
+    beginSessionRecovery('recovering');
+  };
+
+  socketManager.onRecoveryFailed = () => {
+    failSessionRecovery();
   };
 
   socketManager.onError = (message) => {
@@ -893,7 +941,12 @@ document.addEventListener('DOMContentLoaded', () => {
   webrtcManager.onConnectionStateChange = (state) => {
     console.log('WebRTC Connection state changed to:', state);
     if (state === 'connected') {
+      const recoveryCompleted = sessionRecoveryState === 'signaling-disconnected' ||
+        sessionRecoveryState === 'recovering';
+      if (recoveryCompleted) socketManager.completeRecovery();
       p2pConnected = true;
+      recoveryCleanupStarted = false;
+      sessionRecoveryState = 'paired';
       updateOnboarding(3);
       setPetState('idle');
       reconnectAttempts = 0;
@@ -921,6 +974,7 @@ document.addEventListener('DOMContentLoaded', () => {
   };
 
   function scheduleReconnect() {
+    if (sessionRecoveryState === 'signaling-disconnected' || sessionRecoveryState === 'recovering') return;
     if (reconnectTimer || !roomCode || reconnectAttempts >= maxReconnectAttempts) {
       if (reconnectAttempts >= maxReconnectAttempts) {
         showToast(translate('p2p_lost'));
@@ -939,6 +993,43 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!roomCode) return;
       webrtcManager.reconnect();
     }, delay);
+  }
+
+  function initializePairedConnection({ role, code, recovered = false }) {
+    if (recovered) {
+      webrtcManager.reconnect(role, code);
+    } else {
+      webrtcManager.initialize(role, code);
+    }
+  }
+
+  function beginSessionRecovery(state) {
+    if (!roomCode) return;
+    sessionRecoveryState = state;
+    p2pConnected = false;
+    setPetState('connecting');
+    connectionStatusText.textContent = 'Reconectando...';
+    completedCard.classList.add('hidden');
+
+    const deliveryAlreadyConfirmed = webrtcManager.activeSendTransfer?.terminalState === 'completed';
+    if (activeQueueItem && activeQueueItem.status === 'sending' && !deliveryAlreadyConfirmed) {
+      activeQueueItem.status = 'pending';
+      activeQueueItem.recoveryPending = true;
+    }
+
+    if (!recoveryCleanupStarted) {
+      recoveryCleanupStarted = true;
+      webrtcManager.prepareForRecovery();
+    }
+    renderQueue();
+  }
+
+  function failSessionRecovery() {
+    if (sessionRecoveryState === 'recovery-failed' && !roomCode) return;
+    sessionRecoveryState = 'recovery-failed';
+    showToast(translate('p2p_lost'));
+    preserveQueueAfterRecoveryFailure = transferQueue.some((item) => item.status === 'pending' || item.status === 'sending');
+    resetApp({ preserveQueue: preserveQueueAfterRecoveryFailure });
   }
 
   webrtcManager.onFileTransferStart = (fileName, totalBytes, isSending, options = {}) => {
@@ -1021,7 +1112,11 @@ document.addEventListener('DOMContentLoaded', () => {
     updateOnboarding(4, { complete: true });
     progressCard.classList.add('hidden');
     networkDiagnostics.classList.add('hidden');
-    completedCard.classList.remove('hidden');
+    if (sessionRecoveryState === 'signaling-disconnected' || sessionRecoveryState === 'recovering') {
+      completedCard.classList.add('hidden');
+    } else {
+      completedCard.classList.remove('hidden');
+    }
 
     completedFileName.textContent = fileName;
 
@@ -1237,7 +1332,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // --- APP RESET & CLEANUP ---
-  function resetApp() {
+  function resetApp({ preserveQueue = false } = {}) {
     if (reconnectTimer) {
       clearTimeout(reconnectTimer);
       reconnectTimer = null;
@@ -1247,18 +1342,30 @@ document.addEventListener('DOMContentLoaded', () => {
     transferIsActive = false;
     releaseTransferWakeLock();
     setNativeTransferKeepAlive(false);
-    recordNetworkHealth('cancelled');
-    if (activeQueueItem) {
+    if (!preserveQueue) recordNetworkHealth('cancelled');
+    if (activeQueueItem && !preserveQueue) {
       webrtcManager.cancelActiveTransfer();
     }
     socketManager.leaveRoom();
     webrtcManager.close();
     roomCode = null;
+    activeSocketGeneration = 0;
+    recoveryCleanupStarted = false;
     connectionEstablishedTracked = false;
     lastTrackedRoute = 'unknown';
     pendingPairing = null;
     lastProgressRenderTime = 0;
-    transferQueue = [];
+    if (preserveQueue) {
+      transferQueue.forEach((item) => {
+        if (item.status === 'sending') {
+          item.status = 'pending';
+          item.recoveryPending = true;
+        }
+      });
+    } else {
+      transferQueue = [];
+      preserveQueueAfterRecoveryFailure = false;
+    }
     activeQueueItem = null;
     isProcessingQueue = false;
 

@@ -91,13 +91,16 @@ class IpRateLimiter {
 class PairingSecurity {
   constructor({
     invalidatedCodeTtlMs = DEFAULT_INVALIDATED_CODE_TTL_MS,
-    randomInt = crypto.randomInt
+    randomInt = crypto.randomInt,
+    randomBytes = crypto.randomBytes
   } = {}) {
     this.invalidatedCodeTtlMs = invalidatedCodeTtlMs;
     this.randomInt = randomInt;
+    this.randomBytes = randomBytes;
     this.activeRooms = new Map();
     this.invalidatedCodes = new Map();
     this.socketRooms = new Map();
+    this.recoveryTokens = new Map();
   }
 
   pruneInvalidatedCodes(now = Date.now()) {
@@ -127,9 +130,13 @@ class PairingSecurity {
 
   createRoom(code, socketId, timeout) {
     const room = {
+      code,
       occupants: new Set([socketId]),
       state: 'waiting',
-      timeout
+      timeout,
+      recoveryTimeout: null,
+      recoveryGeneration: 0,
+      participants: null
     };
     this.activeRooms.set(code, room);
     this.socketRooms.set(socketId, code);
@@ -153,8 +160,217 @@ class PairingSecurity {
     this.socketRooms.set(socketId, code);
     clearTimeout(room.timeout);
     room.timeout = null;
+    this.createRecoveryParticipants(room);
 
     return { ok: true, code, room };
+  }
+
+  createRecoveryToken(reservedTokens = new Set()) {
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const token = this.randomBytes(32).toString('hex');
+      if (!this.recoveryTokens.has(token) && !reservedTokens.has(token)) return token;
+    }
+    throw new Error('Failed to create recovery credential');
+  }
+
+  createRecoveryParticipants(room) {
+    if (room.participants) return room.participants;
+
+    const [initiatorId, receiverId] = Array.from(room.occupants);
+    const reservedTokens = new Set();
+    const initiatorToken = this.createRecoveryToken(reservedTokens);
+    reservedTokens.add(initiatorToken);
+    const receiverToken = this.createRecoveryToken(reservedTokens);
+    const participants = [
+      {
+        role: 'initiator',
+        socketId: initiatorId,
+        recoveryToken: initiatorToken,
+        pendingRecoveryToken: null,
+        pendingRecoveryGeneration: null,
+        bindingGeneration: 0
+      },
+      {
+        role: 'receiver',
+        socketId: receiverId,
+        recoveryToken: receiverToken,
+        pendingRecoveryToken: null,
+        pendingRecoveryGeneration: null,
+        bindingGeneration: 0
+      }
+    ];
+    room.participants = new Map();
+
+    for (const participant of participants) {
+      room.participants.set(participant.recoveryToken, participant);
+      this.recoveryTokens.set(participant.recoveryToken, {
+        room,
+        participant,
+        token: participant.recoveryToken,
+        state: 'active'
+      });
+    }
+
+    return room.participants;
+  }
+
+  getParticipantBySocket(room, socketId) {
+    if (!room || !room.participants) return null;
+    return Array.from(room.participants.values()).find((participant) => participant.socketId === socketId) || null;
+  }
+
+  clearPendingRecoveryToken(participant) {
+    if (!participant || !participant.pendingRecoveryToken) return;
+    this.recoveryTokens.delete(participant.pendingRecoveryToken);
+    participant.pendingRecoveryToken = null;
+    participant.pendingRecoveryGeneration = null;
+  }
+
+  prepareRecoveryTokenRotation(room, participant) {
+    this.clearPendingRecoveryToken(participant);
+    const recoveryToken = this.createRecoveryToken();
+    participant.pendingRecoveryToken = recoveryToken;
+    participant.pendingRecoveryGeneration = participant.bindingGeneration;
+    this.recoveryTokens.set(recoveryToken, {
+      room,
+      participant,
+      token: recoveryToken,
+      state: 'pending',
+      bindingGeneration: participant.bindingGeneration
+    });
+    return recoveryToken;
+  }
+
+  activatePendingRecoveryToken(room, participant, recoveryToken) {
+    if (!room || !participant || participant.pendingRecoveryToken !== recoveryToken ||
+        participant.pendingRecoveryGeneration !== participant.bindingGeneration) return false;
+
+    const previousToken = participant.recoveryToken;
+    room.participants.delete(previousToken);
+    this.recoveryTokens.delete(previousToken);
+    this.recoveryTokens.delete(recoveryToken);
+    participant.recoveryToken = recoveryToken;
+    participant.pendingRecoveryToken = null;
+    participant.pendingRecoveryGeneration = null;
+    room.participants.set(recoveryToken, participant);
+    this.recoveryTokens.set(recoveryToken, {
+      room,
+      participant,
+      token: recoveryToken,
+      state: 'active'
+    });
+    return true;
+  }
+
+  recoverSession(rawToken, socketId, beforeRecover = () => {}) {
+    const token = String(rawToken || '').trim();
+    if (!/^[a-f0-9]{64}$/.test(token)) return this.connectFailed();
+
+    let record = this.recoveryTokens.get(token);
+    if (!this.isRecoveryRecordValid(record, socketId, token)) return this.connectFailed();
+
+    if (record.participant.socketId === socketId) {
+      const ready = Array.from(record.room.participants.values()).every((entry) => Boolean(entry.socketId));
+      return {
+        ok: true,
+        code: record.room.code,
+        ...record,
+        ready,
+        alreadyConnected: true,
+        recoveryToken: record.participant.pendingRecoveryToken,
+        tokenDeliveryPending: Boolean(record.participant.pendingRecoveryToken)
+      };
+    }
+
+    beforeRecover(record.room.code);
+
+    record = this.recoveryTokens.get(token);
+    if (!this.isRecoveryRecordValid(record, socketId, token)) return this.connectFailed();
+
+    const { room, participant } = record;
+    if (record.state === 'pending') {
+      if (!this.activatePendingRecoveryToken(room, participant, token)) return this.connectFailed();
+    } else {
+      this.clearPendingRecoveryToken(participant);
+    }
+    participant.socketId = socketId;
+    participant.bindingGeneration += 1;
+    room.occupants.add(socketId);
+    this.socketRooms.set(socketId, room.code);
+    const recoveryToken = this.prepareRecoveryTokenRotation(room, participant);
+
+    const ready = Array.from(room.participants.values()).every((entry) => Boolean(entry.socketId));
+    room.state = ready ? 'paired' : 'recovering';
+    if (ready) {
+      clearTimeout(room.recoveryTimeout);
+      room.recoveryTimeout = null;
+      room.recoveryGeneration += 1;
+    }
+
+    return { ok: true, code: room.code, room, participant, recoveryToken, ready };
+  }
+
+  isRecoveryRecordValid(record, socketId, token) {
+    if (!record || !record.room || !record.participant) return false;
+    const { room, participant } = record;
+    const tokenMatches = record.state === 'pending'
+      ? participant.pendingRecoveryToken === token &&
+        participant.pendingRecoveryGeneration === record.bindingGeneration &&
+        record.bindingGeneration === participant.bindingGeneration
+      : record.state === 'active' && participant.recoveryToken === token;
+    return tokenMatches && this.activeRooms.get(room.code) === room &&
+      (room.state === 'paired' || room.state === 'recovering') &&
+      (!participant.socketId || participant.socketId === socketId);
+  }
+
+  acknowledgeRecoveryToken(rawToken, socketId) {
+    const token = String(rawToken || '').trim();
+    if (!/^[a-f0-9]{64}$/.test(token)) return this.connectFailed();
+
+    const record = this.recoveryTokens.get(token);
+    if (!record || !record.room || !record.participant) return this.connectFailed();
+    const { room, participant } = record;
+    if (this.activeRooms.get(room.code) !== room || participant.socketId !== socketId ||
+        this.socketRooms.get(socketId) !== room.code) return this.connectFailed();
+
+    if (record.state === 'active' && participant.recoveryToken === token) {
+      return { ok: true, duplicate: true, room, participant };
+    }
+    if (record.state !== 'pending' || record.bindingGeneration !== participant.bindingGeneration ||
+        !this.activatePendingRecoveryToken(room, participant, token)) return this.connectFailed();
+
+    return { ok: true, duplicate: false, room, participant };
+  }
+
+  markSocketDisconnected(socketId) {
+    const code = this.socketRooms.get(socketId);
+    const room = code ? this.activeRooms.get(code) : null;
+    if (!room || !room.occupants.has(socketId)) {
+      this.socketRooms.delete(socketId);
+      return null;
+    }
+
+    if (room.state === 'waiting' || !room.participants) {
+      return { code, room: this.destroyRoom(code), recoverable: false };
+    }
+
+    const participant = this.getParticipantBySocket(room, socketId);
+    if (!participant) {
+      return { code, room: this.destroyRoom(code), recoverable: false };
+    }
+
+    if (room.state === 'paired') room.recoveryGeneration += 1;
+    participant.socketId = null;
+    room.occupants.delete(socketId);
+    this.socketRooms.delete(socketId);
+    room.state = 'recovering';
+    return {
+      code,
+      room,
+      participant,
+      recoverable: true,
+      recoveryGeneration: room.recoveryGeneration
+    };
   }
 
   isRoomJoinable(room, socketId) {
@@ -175,11 +391,27 @@ class PairingSecurity {
     if (!room) return null;
 
     clearTimeout(room.timeout);
+    clearTimeout(room.recoveryTimeout);
+    room.timeout = null;
+    room.recoveryTimeout = null;
     this.activeRooms.delete(code);
     for (const socketId of room.occupants) {
       if (this.socketRooms.get(socketId) === code) {
         this.socketRooms.delete(socketId);
       }
+    }
+    if (room.participants) {
+      for (const participant of room.participants.values()) {
+        if (participant.socketId && this.socketRooms.get(participant.socketId) === code) {
+          this.socketRooms.delete(participant.socketId);
+        }
+        this.recoveryTokens.delete(participant.recoveryToken);
+        this.clearPendingRecoveryToken(participant);
+        participant.recoveryToken = null;
+        participant.socketId = null;
+      }
+      room.participants.clear();
+      room.participants = null;
     }
     this.invalidateCode(code, now);
     return room;
@@ -189,6 +421,39 @@ class PairingSecurity {
     const room = this.activeRooms.get(code);
     if (!room || room !== expectedRoom || room.state !== 'waiting') return null;
     return this.destroyRoom(code, now);
+  }
+
+  expireRecoveringRoom(code, expectedRoom, expectedGeneration = expectedRoom?.recoveryGeneration, now = Date.now()) {
+    const room = this.activeRooms.get(code);
+    if (!room || room !== expectedRoom || room.state !== 'recovering' ||
+        room.recoveryGeneration !== expectedGeneration) return null;
+    return this.destroyRoom(code, now);
+  }
+
+  abandonRecovery(rawToken, socketId, now = Date.now()) {
+    const token = String(rawToken || '').trim();
+    if (!/^[a-f0-9]{64}$/.test(token)) return this.connectFailed();
+
+    let record = this.recoveryTokens.get(token);
+    if (!record) {
+      const code = this.socketRooms.get(socketId);
+      const room = code ? this.activeRooms.get(code) : null;
+      const participant = this.getParticipantBySocket(room, socketId);
+      if (room && participant && participant.bindingGeneration > 0) {
+        record = { room, participant };
+      }
+    }
+    if (!record || !record.room || !record.participant) return this.connectFailed();
+    const { room, participant } = record;
+    if (this.activeRooms.get(room.code) !== room ||
+        (participant.socketId && participant.socketId !== socketId)) {
+      return this.connectFailed();
+    }
+
+    const destroyedRoom = this.destroyRoom(room.code, now);
+    return destroyedRoom
+      ? { ok: true, code: room.code, room: destroyedRoom }
+      : this.connectFailed();
   }
 
   endRoomsForSocket(socketId, now = Date.now()) {
