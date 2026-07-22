@@ -1,4 +1,66 @@
-const pairingLinkBootstrap = window.PairingLinkPrivacy.consumeBootstrap();
+function createPairingPrivacyFacade(helper) {
+  const fallbackBootstrap = () => ({ code: null, entry: 'direct' });
+
+  return Object.freeze({
+    consumeBootstrap() {
+      if (!helper || typeof helper.consumeBootstrap !== 'function') return fallbackBootstrap();
+      try {
+        const result = helper.consumeBootstrap();
+        const code = result && typeof result.code === 'string' && /^\d{4}$/.test(result.code)
+          ? result.code
+          : null;
+        return {
+          code,
+          entry: code && result.entry === 'pairing_link' ? 'pairing_link' : 'direct'
+        };
+      } catch (err) {
+        return fallbackBootstrap();
+      }
+    },
+
+    isAllowedAnalyticsEvent(eventName) {
+      if (!helper || typeof helper.isAllowedAnalyticsEvent !== 'function') return false;
+      try {
+        return helper.isAllowedAnalyticsEvent(eventName) === true;
+      } catch (err) {
+        return false;
+      }
+    },
+
+    sanitizeAnalyticsProperties(eventName, properties) {
+      if (!helper || typeof helper.sanitizeAnalyticsProperties !== 'function') return null;
+      try {
+        const result = helper.sanitizeAnalyticsProperties(eventName, properties);
+        return result && typeof result === 'object' && !Array.isArray(result) ? result : null;
+      } catch (err) {
+        return null;
+      }
+    },
+
+    buildPairingLink(origin, code) {
+      const normalizedCode = String(code || '').trim();
+      if (!/^\d{4}$/.test(normalizedCode)) {
+        throw new Error('Pairing code must be exactly four digits');
+      }
+
+      if (helper && typeof helper.buildPairingLink === 'function') {
+        try {
+          const candidate = new URL(helper.buildPairingLink(origin, normalizedCode), origin);
+          if (!candidate.searchParams.has('code') && candidate.hash === `#code=${normalizedCode}`) {
+            return candidate.href;
+          }
+        } catch (err) {}
+      }
+
+      const fallback = new URL('/app', origin);
+      fallback.hash = `code=${normalizedCode}`;
+      return fallback.href;
+    }
+  });
+}
+
+const pairingPrivacy = createPairingPrivacyFacade(window.PairingLinkPrivacy);
+const pairingLinkBootstrap = pairingPrivacy.consumeBootstrap();
 
 document.addEventListener('DOMContentLoaded', () => {
   // 1. Initialize Managers
@@ -111,8 +173,9 @@ document.addEventListener('DOMContentLoaded', () => {
   function trackAnalytics(eventName, properties = {}) {
     const sendEvent = () => {
       if (!window.umami || typeof window.umami.track !== 'function') return false;
-      if (!window.PairingLinkPrivacy.isAllowedAnalyticsEvent(eventName)) return false;
-      const safeProperties = window.PairingLinkPrivacy.sanitizeAnalyticsProperties(eventName, properties);
+      if (!pairingPrivacy.isAllowedAnalyticsEvent(eventName)) return false;
+      const safeProperties = pairingPrivacy.sanitizeAnalyticsProperties(eventName, properties);
+      if (!safeProperties) return false;
       window.umami.track(eventName, safeProperties);
       return true;
     };
@@ -753,7 +816,7 @@ document.addEventListener('DOMContentLoaded', () => {
     btnGenerate.classList.add('hidden');
 
     // Generate QR Code containing join URL
-    const joinUrl = window.PairingLinkPrivacy.buildPairingLink(window.location.origin, code);
+    const joinUrl = pairingPrivacy.buildPairingLink(window.location.origin, code);
     qrcodeDiv.innerHTML = '';
     if (typeof QRManager === 'undefined') {
       showToast(translate('qr_library_fail'));
@@ -1033,6 +1096,10 @@ document.addEventListener('DOMContentLoaded', () => {
     recordNetworkHealth('failed');
     applyPendingPwaUpdate();
     setPetState('error');
+    progressCard.classList.add('hidden');
+    networkDiagnostics.classList.add('hidden');
+    completedCard.classList.add('hidden');
+    dropZone.classList.remove('hidden');
   };
 
   webrtcManager.onFileTransferCancelled = (fileName, isLocal) => {
