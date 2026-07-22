@@ -182,14 +182,33 @@ class PairingSecurity {
     reservedTokens.add(initiatorToken);
     const receiverToken = this.createRecoveryToken(reservedTokens);
     const participants = [
-      { role: 'initiator', socketId: initiatorId, recoveryToken: initiatorToken, bindingGeneration: 0 },
-      { role: 'receiver', socketId: receiverId, recoveryToken: receiverToken, bindingGeneration: 0 }
+      {
+        role: 'initiator',
+        socketId: initiatorId,
+        recoveryToken: initiatorToken,
+        pendingRecoveryToken: null,
+        pendingRecoveryGeneration: null,
+        bindingGeneration: 0
+      },
+      {
+        role: 'receiver',
+        socketId: receiverId,
+        recoveryToken: receiverToken,
+        pendingRecoveryToken: null,
+        pendingRecoveryGeneration: null,
+        bindingGeneration: 0
+      }
     ];
     room.participants = new Map();
 
     for (const participant of participants) {
       room.participants.set(participant.recoveryToken, participant);
-      this.recoveryTokens.set(participant.recoveryToken, { room, participant });
+      this.recoveryTokens.set(participant.recoveryToken, {
+        room,
+        participant,
+        token: participant.recoveryToken,
+        state: 'active'
+      });
     }
 
     return room.participants;
@@ -200,16 +219,47 @@ class PairingSecurity {
     return Array.from(room.participants.values()).find((participant) => participant.socketId === socketId) || null;
   }
 
-  rotateRecoveryToken(room, participant) {
-    const previousToken = participant.recoveryToken;
+  clearPendingRecoveryToken(participant) {
+    if (!participant || !participant.pendingRecoveryToken) return;
+    this.recoveryTokens.delete(participant.pendingRecoveryToken);
+    participant.pendingRecoveryToken = null;
+    participant.pendingRecoveryGeneration = null;
+  }
+
+  prepareRecoveryTokenRotation(room, participant) {
+    this.clearPendingRecoveryToken(participant);
     const recoveryToken = this.createRecoveryToken();
+    participant.pendingRecoveryToken = recoveryToken;
+    participant.pendingRecoveryGeneration = participant.bindingGeneration;
+    this.recoveryTokens.set(recoveryToken, {
+      room,
+      participant,
+      token: recoveryToken,
+      state: 'pending',
+      bindingGeneration: participant.bindingGeneration
+    });
+    return recoveryToken;
+  }
+
+  activatePendingRecoveryToken(room, participant, recoveryToken) {
+    if (!room || !participant || participant.pendingRecoveryToken !== recoveryToken ||
+        participant.pendingRecoveryGeneration !== participant.bindingGeneration) return false;
+
+    const previousToken = participant.recoveryToken;
     room.participants.delete(previousToken);
     this.recoveryTokens.delete(previousToken);
+    this.recoveryTokens.delete(recoveryToken);
     participant.recoveryToken = recoveryToken;
-    participant.bindingGeneration += 1;
+    participant.pendingRecoveryToken = null;
+    participant.pendingRecoveryGeneration = null;
     room.participants.set(recoveryToken, participant);
-    this.recoveryTokens.set(recoveryToken, { room, participant });
-    return recoveryToken;
+    this.recoveryTokens.set(recoveryToken, {
+      room,
+      participant,
+      token: recoveryToken,
+      state: 'active'
+    });
+    return true;
   }
 
   recoverSession(rawToken, socketId, beforeRecover = () => {}) {
@@ -217,23 +267,37 @@ class PairingSecurity {
     if (!/^[a-f0-9]{64}$/.test(token)) return this.connectFailed();
 
     let record = this.recoveryTokens.get(token);
-    if (!this.isRecoveryRecordValid(record, socketId)) return this.connectFailed();
+    if (!this.isRecoveryRecordValid(record, socketId, token)) return this.connectFailed();
 
     if (record.participant.socketId === socketId) {
       const ready = Array.from(record.room.participants.values()).every((entry) => Boolean(entry.socketId));
-      return { ok: true, code: record.room.code, ...record, ready, alreadyConnected: true };
+      return {
+        ok: true,
+        code: record.room.code,
+        ...record,
+        ready,
+        alreadyConnected: true,
+        recoveryToken: record.participant.pendingRecoveryToken,
+        tokenDeliveryPending: Boolean(record.participant.pendingRecoveryToken)
+      };
     }
 
     beforeRecover(record.room.code);
 
     record = this.recoveryTokens.get(token);
-    if (!this.isRecoveryRecordValid(record, socketId)) return this.connectFailed();
+    if (!this.isRecoveryRecordValid(record, socketId, token)) return this.connectFailed();
 
     const { room, participant } = record;
+    if (record.state === 'pending') {
+      if (!this.activatePendingRecoveryToken(room, participant, token)) return this.connectFailed();
+    } else {
+      this.clearPendingRecoveryToken(participant);
+    }
     participant.socketId = socketId;
+    participant.bindingGeneration += 1;
     room.occupants.add(socketId);
     this.socketRooms.set(socketId, room.code);
-    const recoveryToken = this.rotateRecoveryToken(room, participant);
+    const recoveryToken = this.prepareRecoveryTokenRotation(room, participant);
 
     const ready = Array.from(room.participants.values()).every((entry) => Boolean(entry.socketId));
     room.state = ready ? 'paired' : 'recovering';
@@ -246,12 +310,36 @@ class PairingSecurity {
     return { ok: true, code: room.code, room, participant, recoveryToken, ready };
   }
 
-  isRecoveryRecordValid(record, socketId) {
+  isRecoveryRecordValid(record, socketId, token) {
     if (!record || !record.room || !record.participant) return false;
     const { room, participant } = record;
-    return this.activeRooms.get(room.code) === room &&
+    const tokenMatches = record.state === 'pending'
+      ? participant.pendingRecoveryToken === token &&
+        participant.pendingRecoveryGeneration === record.bindingGeneration &&
+        record.bindingGeneration === participant.bindingGeneration
+      : record.state === 'active' && participant.recoveryToken === token;
+    return tokenMatches && this.activeRooms.get(room.code) === room &&
       (room.state === 'paired' || room.state === 'recovering') &&
       (!participant.socketId || participant.socketId === socketId);
+  }
+
+  acknowledgeRecoveryToken(rawToken, socketId) {
+    const token = String(rawToken || '').trim();
+    if (!/^[a-f0-9]{64}$/.test(token)) return this.connectFailed();
+
+    const record = this.recoveryTokens.get(token);
+    if (!record || !record.room || !record.participant) return this.connectFailed();
+    const { room, participant } = record;
+    if (this.activeRooms.get(room.code) !== room || participant.socketId !== socketId ||
+        this.socketRooms.get(socketId) !== room.code) return this.connectFailed();
+
+    if (record.state === 'active' && participant.recoveryToken === token) {
+      return { ok: true, duplicate: true, room, participant };
+    }
+    if (record.state !== 'pending' || record.bindingGeneration !== participant.bindingGeneration ||
+        !this.activatePendingRecoveryToken(room, participant, token)) return this.connectFailed();
+
+    return { ok: true, duplicate: false, room, participant };
   }
 
   markSocketDisconnected(socketId) {
@@ -273,7 +361,6 @@ class PairingSecurity {
 
     if (room.state === 'paired') room.recoveryGeneration += 1;
     participant.socketId = null;
-    participant.bindingGeneration += 1;
     room.occupants.delete(socketId);
     this.socketRooms.delete(socketId);
     room.state = 'recovering';
@@ -319,6 +406,7 @@ class PairingSecurity {
           this.socketRooms.delete(participant.socketId);
         }
         this.recoveryTokens.delete(participant.recoveryToken);
+        this.clearPendingRecoveryToken(participant);
         participant.recoveryToken = null;
         participant.socketId = null;
       }

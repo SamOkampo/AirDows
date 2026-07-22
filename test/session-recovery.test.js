@@ -209,7 +209,7 @@ test('a stale socket cannot reclaim a participant after a legitimate rejoin', ()
   assert.equal(security.socketRooms.get('initiator-new'), '1234');
 });
 
-test('successful recovery rotates the participant token and rejects the old token', () => {
+test('successful acknowledgement activates the replacement and rejects the old token', () => {
   const { security, initiator } = createPairedRoom();
   const oldToken = initiator.recoveryToken;
   security.markSocketDisconnected('socket-initiator');
@@ -217,8 +217,139 @@ test('successful recovery rotates the participant token and rejects the old toke
   const recovered = security.recoverSession(oldToken, 'initiator-new');
   assert.equal(recovered.ok, true);
   assert.notEqual(recovered.recoveryToken, oldToken);
+  assert.equal(security.recoveryTokens.has(oldToken), true);
+  assert.equal(security.acknowledgeRecoveryToken(
+    recovered.recoveryToken,
+    'initiator-new'
+  ).ok, true);
   assert.equal(security.recoveryTokens.has(oldToken), false);
   assert.equal(security.recoverSession(oldToken, 'attacker').ok, false);
+});
+
+test('disconnect before replacement-token delivery preserves the last client-known token', () => {
+  const { security, initiator } = createPairedRoom();
+  const oldToken = initiator.recoveryToken;
+  security.markSocketDisconnected('socket-initiator');
+  const recovered = security.recoverSession(oldToken, 'initiator-new');
+
+  security.markSocketDisconnected('initiator-new');
+  assert.equal(security.recoveryTokens.get(oldToken).state, 'active');
+  assert.equal(security.recoveryTokens.get(recovered.recoveryToken).state, 'pending');
+  assert.equal(initiator.socketId, null);
+});
+
+test('retry with the last client-known token succeeds after delivery loss', () => {
+  const { security, initiator } = createPairedRoom();
+  const oldToken = initiator.recoveryToken;
+  security.markSocketDisconnected('socket-initiator');
+  const first = security.recoverSession(oldToken, 'initiator-new');
+  security.markSocketDisconnected('initiator-new');
+
+  const retry = security.recoverSession(oldToken, 'initiator-newer');
+  assert.equal(retry.ok, true);
+  assert.notEqual(retry.recoveryToken, first.recoveryToken);
+  assert.equal(security.recoveryTokens.has(first.recoveryToken), false);
+  assert.equal(security.recoveryTokens.has(oldToken), true);
+});
+
+test('delivered but unacknowledged replacement remains pending beside the active token', () => {
+  const { security, initiator } = createPairedRoom();
+  const oldToken = initiator.recoveryToken;
+  security.markSocketDisconnected('socket-initiator');
+  const recovered = security.recoverSession(oldToken, 'initiator-new');
+
+  assert.equal(initiator.recoveryToken, oldToken);
+  assert.equal(initiator.pendingRecoveryToken, recovered.recoveryToken);
+  assert.equal(security.recoveryTokens.get(oldToken).state, 'active');
+  assert.equal(security.recoveryTokens.get(recovered.recoveryToken).state, 'pending');
+});
+
+test('duplicate recovery-token acknowledgement is idempotent', () => {
+  const { security, initiator } = createPairedRoom();
+  const oldToken = initiator.recoveryToken;
+  security.markSocketDisconnected('socket-initiator');
+  const recovered = security.recoverSession(oldToken, 'initiator-new');
+
+  const first = security.acknowledgeRecoveryToken(recovered.recoveryToken, 'initiator-new');
+  const duplicate = security.acknowledgeRecoveryToken(recovered.recoveryToken, 'initiator-new');
+  assert.equal(first.ok, true);
+  assert.equal(first.duplicate, false);
+  assert.equal(duplicate.ok, true);
+  assert.equal(duplicate.duplicate, true);
+  assert.equal(security.recoveryTokens.size, 2);
+});
+
+test('a stale or disconnected socket cannot acknowledge a pending replacement', () => {
+  const { security, initiator } = createPairedRoom();
+  const oldToken = initiator.recoveryToken;
+  security.markSocketDisconnected('socket-initiator');
+  const recovered = security.recoverSession(oldToken, 'initiator-new');
+  security.markSocketDisconnected('initiator-new');
+
+  assert.equal(security.acknowledgeRecoveryToken(
+    recovered.recoveryToken,
+    'initiator-new'
+  ).ok, false);
+  assert.equal(security.recoveryTokens.has(oldToken), true);
+});
+
+test('old and pending tokens cannot bind two sockets simultaneously', () => {
+  const first = createPairedRoom();
+  const oldToken = first.initiator.recoveryToken;
+  first.security.markSocketDisconnected('socket-initiator');
+  const handoff = first.security.recoverSession(oldToken, 'first-winner');
+  first.security.markSocketDisconnected('first-winner');
+  assert.equal(first.security.recoverSession(oldToken, 'old-winner').ok, true);
+  assert.equal(first.security.recoverSession(handoff.recoveryToken, 'pending-loser').ok, false);
+
+  const second = createPairedRoom();
+  const secondOldToken = second.initiator.recoveryToken;
+  second.security.markSocketDisconnected('socket-initiator');
+  const secondHandoff = second.security.recoverSession(secondOldToken, 'first-winner');
+  second.security.markSocketDisconnected('first-winner');
+  assert.equal(second.security.recoverSession(secondHandoff.recoveryToken, 'pending-winner').ok, true);
+  assert.equal(second.security.recoverSession(secondOldToken, 'old-loser').ok, false);
+});
+
+test('disconnect during a second rotation remains recoverable with the last stored token', () => {
+  const { security, initiator } = createPairedRoom();
+  const initialToken = initiator.recoveryToken;
+  security.markSocketDisconnected('socket-initiator');
+  const first = security.recoverSession(initialToken, 'initiator-one');
+  security.markSocketDisconnected('initiator-one');
+  const second = security.recoverSession(first.recoveryToken, 'initiator-two');
+  security.markSocketDisconnected('initiator-two');
+
+  const third = security.recoverSession(first.recoveryToken, 'initiator-three');
+  assert.equal(third.ok, true);
+  assert.equal(security.recoveryTokens.has(second.recoveryToken), false);
+  assert.equal(security.recoveryTokens.has(first.recoveryToken), true);
+});
+
+test('room expiry removes active and pending recovery tokens', () => {
+  const { security, room, initiator } = createPairedRoom();
+  const oldToken = initiator.recoveryToken;
+  security.markSocketDisconnected('socket-initiator');
+  const recovered = security.recoverSession(oldToken, 'initiator-new');
+  const disconnected = security.markSocketDisconnected('initiator-new');
+
+  assert.equal(security.expireRecoveringRoom(
+    '1234', room, disconnected.recoveryGeneration, 100
+  ), room);
+  assert.equal(security.recoveryTokens.has(oldToken), false);
+  assert.equal(security.recoveryTokens.has(recovered.recoveryToken), false);
+});
+
+test('explicit abandon during pending rotation removes every credential', () => {
+  const { security, initiator } = createPairedRoom();
+  const oldToken = initiator.recoveryToken;
+  security.markSocketDisconnected('socket-initiator');
+  const recovered = security.recoverSession(oldToken, 'initiator-new');
+
+  assert.equal(security.abandonRecovery(recovered.recoveryToken, 'initiator-new', 100).ok, true);
+  assert.equal(security.recoveryTokens.has(oldToken), false);
+  assert.equal(security.recoveryTokens.has(recovered.recoveryToken), false);
+  assert.equal(security.activeRooms.has('1234'), false);
 });
 
 test('a participant token remains bound to its original role', () => {
@@ -396,6 +527,73 @@ test('Socket.IO reconnect automatically submits only the in-memory recovery toke
   }
 });
 
+test('client stores a delivered replacement before acknowledging it', () => {
+  const socket = new FakeSocket();
+  const previousWindow = global.window;
+  const previousIo = global.io;
+  global.window = { AirDowsRuntime: {} };
+  global.io = () => socket;
+  try {
+    const manager = new SocketManager();
+    manager.connect();
+    socket.receive('connect');
+    socket.receive('paired', {
+      role: 'initiator', code: '1234', recoveryToken: 'a'.repeat(64), recovered: false
+    });
+    socket.receive('disconnect', 'transport close');
+    socket.receive('connect');
+
+    let tokenAtAcknowledgement = null;
+    const originalEmit = socket.emit.bind(socket);
+    socket.emit = (event, payload) => {
+      if (event === 'recovery-token-ack') {
+        tokenAtAcknowledgement = manager.recovery.session.recoveryToken;
+      }
+      originalEmit(event, payload);
+    };
+    socket.receive('recovery-token', { recoveryToken: 'b'.repeat(64) });
+
+    assert.equal(tokenAtAcknowledgement, 'b'.repeat(64));
+    assert.equal(manager.recovery.session.recoveryToken, 'b'.repeat(64));
+    assert.deepEqual(socket.sent.at(-1), {
+      event: 'recovery-token-ack',
+      payload: { recoveryToken: 'b'.repeat(64) }
+    });
+  } finally {
+    global.window = previousWindow;
+    global.io = previousIo;
+  }
+});
+
+test('invalid token delivery is not stored or acknowledged', () => {
+  const socket = new FakeSocket();
+  const manager = new SocketManager();
+  manager.socket = socket;
+  manager.connectionGeneration = 1;
+  manager.recoveryRequestGeneration = 1;
+  manager.recovery.establish({ recoveryToken: 'a'.repeat(64), code: '1234', role: 'receiver' });
+  manager.recovery.markRecovering();
+
+  assert.equal(manager.storeRecoveryTokenAndAcknowledge('invalid', socket, 1), false);
+  assert.equal(manager.recovery.session.recoveryToken, 'a'.repeat(64));
+  assert.equal(socket.sent.some((entry) => entry.event === 'recovery-token-ack'), false);
+});
+
+test('duplicate token delivery is idempotently stored and acknowledged', () => {
+  const socket = new FakeSocket();
+  const manager = new SocketManager();
+  manager.socket = socket;
+  manager.connectionGeneration = 1;
+  manager.recoveryRequestGeneration = 1;
+  manager.recovery.establish({ recoveryToken: 'a'.repeat(64), code: '1234', role: 'receiver' });
+  manager.recovery.markRecovering();
+
+  assert.equal(manager.storeRecoveryTokenAndAcknowledge('b'.repeat(64), socket, 1), true);
+  assert.equal(manager.storeRecoveryTokenAndAcknowledge('b'.repeat(64), socket, 1), true);
+  assert.equal(manager.recovery.session.recoveryToken, 'b'.repeat(64));
+  assert.equal(socket.sent.filter((entry) => entry.event === 'recovery-token-ack').length, 2);
+});
+
 test('events from an obsolete Socket.IO instance are ignored', () => {
   const firstSocket = new FakeSocket();
   const secondSocket = new FakeSocket();
@@ -417,9 +615,11 @@ test('events from an obsolete Socket.IO instance are ignored', () => {
     secondSocket.receive('connect');
 
     firstSocket.receive('paired', { role: 'receiver', code: '1234' });
+    firstSocket.receive('recovery-token', { recoveryToken: 'f'.repeat(64) });
     firstSocket.receive('signal', { data: { type: 'candidate' } });
     firstSocket.receive('disconnect', 'stale transport');
     assert.deepEqual({ paired, signals, disconnected }, { paired: 0, signals: 0, disconnected: 0 });
+    assert.equal(firstSocket.sent.some((entry) => entry.event === 'recovery-token-ack'), false);
   } finally {
     global.window = previousWindow;
     global.io = previousIo;
@@ -472,6 +672,27 @@ test('manual pairing sends abandonment before opening a new join attempt', () =>
     { event: 'join-code', payload: { code: '2468' } }
   ]);
   assert.equal(manager.recovery.state, 'unpaired');
+});
+
+test('manual pairing clears delivered and pending client token state', () => {
+  const socket = new FakeSocket();
+  const manager = new SocketManager();
+  manager.socket = socket;
+  manager.connectionGeneration = 1;
+  manager.recoveryRequestGeneration = 1;
+  manager.recovery.establish({ recoveryToken: 'a'.repeat(64), code: '1234', role: 'initiator' });
+  manager.recovery.markRecovering();
+  manager.storeRecoveryTokenAndAcknowledge('b'.repeat(64), socket, 1);
+  const acknowledgements = socket.sent.filter((entry) => entry.event === 'recovery-token-ack').length;
+
+  manager.joinCode('2468');
+  assert.equal(manager.recovery.session, null);
+  assert.equal(manager.pendingAbandonSession, null);
+  assert.equal(manager.storeRecoveryTokenAndAcknowledge('c'.repeat(64), socket, 1), false);
+  assert.equal(
+    socket.sent.filter((entry) => entry.event === 'recovery-token-ack').length,
+    acknowledgements
+  );
 });
 
 test('a late recovered event cannot overwrite a new manual pairing attempt', () => {

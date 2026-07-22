@@ -207,11 +207,12 @@ class SocketManager {
       if (this.socket !== socket) return;
       if (!data || typeof data !== 'object') return;
       if (data.recovered) {
+        const session = this.recovery.session;
         if (!['signaling-disconnected', 'recovering'].includes(this.recovery.state) ||
+            !session || data.code !== session.code || data.role !== session.role ||
             this.acceptedRecoveryGeneration === socketConnectionGeneration ||
             (this.recoveryRequestInFlight &&
-              this.recoveryRequestGeneration !== socketConnectionGeneration) ||
-            !this.recovery.updateRecoveryCredential(data)) return;
+              this.recoveryRequestGeneration !== socketConnectionGeneration)) return;
         this.recoveryRequestInFlight = false;
         this.acceptedRecoveryGeneration = socketConnectionGeneration;
       } else {
@@ -247,12 +248,20 @@ class SocketManager {
       if (this.onPeerDisconnected) this.onPeerDisconnected(details);
     });
 
-    socket.on('recovery-waiting', ({ recoveryToken } = {}) => {
+    socket.on('recovery-token', ({ recoveryToken } = {}) => {
       if (this.socket !== socket) return;
-      const session = this.recovery.session;
+      this.storeRecoveryTokenAndAcknowledge(
+        recoveryToken,
+        socket,
+        socketConnectionGeneration
+      );
+    });
+
+    socket.on('recovery-waiting', () => {
+      if (this.socket !== socket) return;
       if (!this.recoveryRequestInFlight ||
-          this.recoveryRequestGeneration !== socketConnectionGeneration || !session ||
-          !this.recovery.updateRecoveryCredential({ ...session, recoveryToken })) return;
+          this.recoveryRequestGeneration !== socketConnectionGeneration ||
+          !this.recovery.markRecovering()) return;
       if (this.onRecoveryWaiting) this.onRecoveryWaiting();
     });
 
@@ -337,6 +346,21 @@ class SocketManager {
 
   completeRecovery() {
     return this.recovery.completeRecovery();
+  }
+
+  storeRecoveryTokenAndAcknowledge(recoveryToken, socket, connectionGeneration) {
+    if (this.socket !== socket || !socket.connected ||
+        !['signaling-disconnected', 'recovering'].includes(this.recovery.state) ||
+        this.recoveryRequestGeneration !== connectionGeneration || !this.recovery.session) return false;
+
+    const stored = this.recovery.updateRecoveryCredential({
+      ...this.recovery.session,
+      recoveryToken
+    });
+    if (!stored) return false;
+
+    socket.emit('recovery-token-ack', { recoveryToken });
+    return true;
   }
 
   abandonCurrentRecovery() {

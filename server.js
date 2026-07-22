@@ -701,14 +701,23 @@ io.on('connection', (socket) => {
     }
 
     socket.join(result.code);
+    if (result.tokenDeliveryPending || result.recoveryToken) {
+      socket.emit('recovery-token', { recoveryToken: result.recoveryToken });
+    }
     if (result.alreadyConnected) return;
     if (!result.ready) {
-      socket.emit('recovery-waiting', { recoveryToken: result.recoveryToken });
+      socket.emit('recovery-waiting');
       return;
     }
 
     console.info('[Recovery] Paired session restored');
     emitPairedSession(result.room, true);
+  });
+
+  socket.on('recovery-token-ack', (payload = {}) => {
+    const recoveryToken = payload && typeof payload === 'object' ? payload.recoveryToken : '';
+    const result = pairingSecurity.acknowledgeRecoveryToken(recoveryToken, socket.id);
+    if (!result.ok) socket.emit('recovery-failed', { message: 'CONNECT_FAILED' });
   });
 
   // A client that gives up recovery explicitly releases the otherwise longer server grace period.
@@ -763,13 +772,14 @@ function emitPairedSession(room, recovered) {
 
   for (const participant of participants) {
     const peer = participants.find((candidate) => candidate !== participant);
-    io.to(participant.socketId).emit('paired', {
+    const payload = {
       role: participant.role,
       peerId: peer.socketId,
       code: room.code,
-      recoveryToken: participant.recoveryToken,
       recovered
-    });
+    };
+    if (!recovered) payload.recoveryToken = participant.recoveryToken;
+    io.to(participant.socketId).emit('paired', payload);
   }
 }
 
