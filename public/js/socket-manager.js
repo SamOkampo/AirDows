@@ -124,10 +124,13 @@ class SocketManager {
     this.onRecoveryStateChange = null;
     this.onRecoveryWaiting = null;
     this.onRecoveryFailed = null;
+    this.onManualActionPending = null;
     this.recoveryRequestInFlight = false;
     this.recoveryRequestGeneration = 0;
     this.acceptedRecoveryGeneration = 0;
     this.pendingAbandonSession = null;
+    this.pendingManualAction = null;
+    this.signalingConnectRequested = false;
     this.recovery = new SessionRecoveryState({
       timeoutMs: options.recoveryTimeoutMs,
       setTimeoutFn: options.setTimeoutFn,
@@ -161,20 +164,32 @@ class SocketManager {
       reconnection: true
     });
     this.socket = socket;
+    this.signalingConnectRequested = false;
     let socketConnectionGeneration = 0;
     let connectionActive = false;
 
     socket.on('connect', () => {
       if (this.socket !== socket || connectionActive) return;
       connectionActive = true;
+      this.signalingConnectRequested = false;
       const generation = ++this.connectionGeneration;
       socketConnectionGeneration = generation;
-      this.flushPendingAbandon();
-      const shouldRecover = Boolean(this.recovery.session) &&
+      const hadPendingManualAction = Boolean(this.pendingManualAction);
+      if (hadPendingManualAction) {
+        this.flushPendingManualAction();
+      } else {
+        this.flushPendingAbandon();
+      }
+      const shouldRecover = !hadPendingManualAction && !this.pendingAbandonSession &&
+        Boolean(this.recovery.session) &&
         ['signaling-disconnected', 'recovering'].includes(this.recovery.state);
       if (shouldRecover) this.recovery.markRecovering();
       console.log('Connected to signaling server');
-      if (this.onConnect) this.onConnect({ recovering: shouldRecover, generation });
+      if (this.onConnect) this.onConnect({
+        recovering: shouldRecover,
+        generation,
+        manualAction: hadPendingManualAction
+      });
       
       // Request ICE config immediately on connection
       this.requestIceConfig();
@@ -185,6 +200,11 @@ class SocketManager {
       if (this.socket !== socket) return;
       console.log('Received ICE configuration from server');
       if (this.onIceConfig) this.onIceConfig(config);
+    });
+
+    socket.on('connect_error', () => {
+      if (this.socket !== socket) return;
+      this.signalingConnectRequested = false;
     });
 
     socket.on('relay-budget', (budget) => {
@@ -278,6 +298,7 @@ class SocketManager {
     socket.on('disconnect', (reason) => {
       if (this.socket !== socket) return;
       connectionActive = false;
+      this.signalingConnectRequested = false;
       this.recoveryRequestInFlight = false;
       this.acceptedRecoveryGeneration = 0;
       const recoverable = this.recovery.markSignalingDisconnected();
@@ -292,28 +313,82 @@ class SocketManager {
     }
   }
 
-  generateCode() {
-    if (this.socket) {
-      this.abandonCurrentRecovery();
-      this.recoveryRequestInFlight = false;
-      this.acceptedRecoveryGeneration = 0;
-      this.recovery.reset();
-      this.socket.emit('generate-code');
-    } else {
-      console.error('Socket not connected');
+  ensureConnected() {
+    if (this.socket?.connected) {
+      this.signalingConnectRequested = false;
+      return true;
     }
+
+    if (!this.socket) {
+      this.connect();
+      return Boolean(this.socket?.connected);
+    }
+
+    if (!this.signalingConnectRequested && typeof this.socket.connect === 'function') {
+      this.signalingConnectRequested = true;
+      try {
+        this.socket.connect();
+      } catch (error) {
+        this.signalingConnectRequested = false;
+        if (this.onError) this.onError('CONNECT_FAILED');
+      }
+    }
+    return false;
+  }
+
+  generateCode() {
+    return this.requestManualAction({ type: 'generate' });
   }
 
   joinCode(code) {
-    if (this.socket) {
-      this.abandonCurrentRecovery();
-      this.recoveryRequestInFlight = false;
-      this.acceptedRecoveryGeneration = 0;
-      this.recovery.reset();
-      this.socket.emit('join-code', { code });
-    } else {
-      console.error('Socket not connected');
+    const normalizedCode = String(code || '').trim();
+    if (!/^\d{4}$/.test(normalizedCode)) return false;
+    return this.requestManualAction({ type: 'join', code: normalizedCode });
+  }
+
+  requestManualAction(action) {
+    if (!action || !['generate', 'join'].includes(action.type)) return false;
+    if (this.socket?.connected && this.performManualAction(action)) {
+      this.pendingManualAction = null;
+      return true;
     }
+
+    this.pendingManualAction = action;
+    if (this.onManualActionPending) this.onManualActionPending({ type: action.type });
+    this.ensureConnected();
+    return false;
+  }
+
+  flushPendingManualAction() {
+    if (!this.pendingManualAction || !this.socket?.connected) return false;
+    const action = this.pendingManualAction;
+    if (!this.performManualAction(action)) return false;
+    if (this.pendingManualAction === action) this.pendingManualAction = null;
+    return true;
+  }
+
+  performManualAction(action) {
+    if (!this.socket?.connected) return false;
+    if (action.type === 'join' && !/^\d{4}$/.test(action.code)) return false;
+
+    try {
+      if (this.pendingAbandonSession && !this.flushPendingAbandon()) return false;
+      this.abandonCurrentRecovery();
+      if (this.pendingAbandonSession) return false;
+      if (!this.socket.connected) return false;
+      if (action.type === 'generate') {
+        this.socket.emit('generate-code');
+      } else {
+        this.socket.emit('join-code', { code: action.code });
+      }
+    } catch (error) {
+      return false;
+    }
+
+    this.recoveryRequestInFlight = false;
+    this.acceptedRecoveryGeneration = 0;
+    this.recovery.reset();
+    return true;
   }
 
   sendSignal(roomCode, data) {
@@ -323,6 +398,7 @@ class SocketManager {
   }
 
   leaveRoom() {
+    this.pendingManualAction = null;
     this.abandonCurrentRecovery();
     if (this.socket && this.socket.connected) {
       this.socket.emit('leave-room');
@@ -377,9 +453,13 @@ class SocketManager {
 
   flushPendingAbandon() {
     if (!this.pendingAbandonSession || !this.socket || !this.socket.connected) return false;
-    this.socket.emit('abandon-recovery', {
-      recoveryToken: this.pendingAbandonSession.recoveryToken
-    });
+    try {
+      this.socket.emit('abandon-recovery', {
+        recoveryToken: this.pendingAbandonSession.recoveryToken
+      });
+    } catch (error) {
+      return false;
+    }
     this.pendingAbandonSession = null;
     return true;
   }
