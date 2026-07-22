@@ -2,6 +2,7 @@
 
 const crypto = require('crypto');
 const net = require('net');
+const { ipKeyGenerator } = require('express-rate-limit');
 
 const CONNECT_FAILED = 'CONNECT_FAILED';
 const DEFAULT_INVALIDATED_CODE_TTL_MS = 10 * 60 * 1000;
@@ -13,6 +14,48 @@ function normalizeClientIp(clientIp) {
   return net.isIP(mappedIpv4) === 4 ? mappedIpv4 : normalized;
 }
 
+function getIpRateLimitKey(clientIp) {
+  return ipKeyGenerator(normalizeClientIp(clientIp));
+}
+
+function getSingleValidIp(headerValue) {
+  if (Array.isArray(headerValue)) {
+    if (headerValue.length !== 1) return null;
+    [headerValue] = headerValue;
+  }
+  if (typeof headerValue !== 'string') return null;
+
+  const candidate = headerValue.trim();
+  if (!candidate || candidate.includes(',') || net.isIP(candidate) === 0) return null;
+  return normalizeClientIp(candidate);
+}
+
+function resolveClientIp({
+  railwayEnvironmentId,
+  xRealIp,
+  remoteAddress,
+  handshakeAddress
+} = {}) {
+  if (railwayEnvironmentId) {
+    const railwayClientIp = getSingleValidIp(xRealIp);
+    if (railwayClientIp) return railwayClientIp;
+  }
+
+  return normalizeClientIp(remoteAddress || handshakeAddress || 'unknown');
+}
+
+function resolveHttpClientIp(request, railwayEnvironmentId) {
+  return resolveClientIp({
+    railwayEnvironmentId,
+    xRealIp: request.headers?.['x-real-ip'],
+    remoteAddress: request.socket?.remoteAddress
+  });
+}
+
+function getHttpRateLimitKey(request, railwayEnvironmentId) {
+  return getIpRateLimitKey(resolveHttpClientIp(request, railwayEnvironmentId));
+}
+
 class IpRateLimiter {
   constructor({ maxAttempts, windowMs = DEFAULT_RATE_LIMIT_WINDOW_MS }) {
     this.maxAttempts = maxAttempts;
@@ -21,7 +64,7 @@ class IpRateLimiter {
   }
 
   attempt(clientIp, now = Date.now()) {
-    const key = normalizeClientIp(clientIp);
+    const key = getIpRateLimitKey(clientIp);
     let entry = this.entries.get(key);
 
     if (!entry || now - entry.startedAt >= this.windowMs) {
@@ -167,7 +210,11 @@ module.exports = {
   CONNECT_FAILED,
   DEFAULT_INVALIDATED_CODE_TTL_MS,
   DEFAULT_RATE_LIMIT_WINDOW_MS,
+  getIpRateLimitKey,
   IpRateLimiter,
+  getHttpRateLimitKey,
   normalizeClientIp,
+  resolveClientIp,
+  resolveHttpClientIp,
   PairingSecurity
 };
