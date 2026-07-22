@@ -1,113 +1,85 @@
-# AirRTC - P2P Secure File Transfer (AirDrop Clone)
+# AirDows
 
-An elegant, high-performance, and secure AirDrop clone MVP designed to transfer files directly between devices (e.g., a desktop computer and a mobile phone) using **WebRTC (peer-to-peer)** with **Node.js & Socket.io** serving as the 4-digit/QR-based signaling layer.
+**AirDows** is a browser-based file transfer application for Android, iPhone, Windows, and macOS. Transfer files directly between your devices by scanning a QR code or entering a 4-digit pairing code—no account required.
 
-Because transfers run directly peer-to-peer, files never touch a cloud server. Transfer speeds are limited only by your local Wi-Fi router, and there are **no file size limits**.
-
----
-
-## 🚀 Key Features
-
-- **Direct P2P Transfer:** Ultra-fast, zero-cloud file transfers using WebRTC `RTCDataChannel` in binary bytes mode.
-- **Backpressure & Chunking:** Optimally slices files into 16KB chunks and monitors `bufferedAmount` to prevent memory bottlenecks or channel disconnects, enabling high-speed transfers of very large files (even gigabytes) reliably.
-- **Dual Pairing Mechanism:** Connect instantly using a unique **4-digit numerical room code** or by scanning a **QR Code**.
-- **Auto-Join URL:** The QR Code encodes the direct URL (`http://<IP>:3000/?code=XXXX`). Scanning it automatically opens the web app and pairs the mobile device to the host instantly.
-- **Premium Glassmorphic UI:** A beautiful dark-theme interface with floating color decorations, smooth CSS animations, live transfer speeds, drag-and-drop support, and file download indicators.
+**Main site:** https://airdows.com
 
 ---
 
-## 🛠️ Architecture & Modularity
+## 📋 What is AirDows?
 
-The codebase is engineered to be exceptionally clean, modular, and separated by concerns:
+AirDows enables you to send files from your browser to any nearby device. Pairing is instant via QR code or 4-digit code. Files are transferred at original quality without compression and are never permanently stored.
 
-1. **`server.js` (Signaling Server):**
-   - Node.js + Express + Socket.io server.
-   - Manages code generation (1000–9999), rooms (maximum 2 peers), and routes RTC signal packets (offers, answers, ICE candidates) between the peers.
-2. **`public/index.html` & `style.css` (User Interface):**
-   - Implements responsive screen transitions and glassmorphic card styles.
-3. **`public/js/socket-manager.js` (Signaling Client):**
-   - Standardizes the signaling connection, handling room creation, code validation, and SDP/ICE routing.
-4. **`public/js/webrtc-manager.js` (WebRTC Controller):**
-   - Manages the RTCPeerConnection life cycle, ICE collection, and the binary data channel.
-   - Implements chunked binary stream reading via `FileReader`, backpressure congestion handling via the `'bufferedamountlow'` event, and binary byte array reconstruction on receipt.
-5. **`public/js/app.js` (App Controller):**
-   - Binds UI controls, triggers drag-and-drop operations, measures real-time speed in MB/s, and initiates QR generation and URL query parameter parsing.
+When network conditions allow, AirDows attempts to establish a direct peer-to-peer (P2P) connection using WebRTC. If direct connection is not possible, encrypted traffic may pass temporarily through a TURN relay server as a fallback.
+
+The effective file size depends on your browser, device, available storage, network stability, and the connection path between devices.
 
 ---
 
-## 🏁 How to Run
+## ✨ Key Features
 
-1. Make sure you have [Node.js](https://nodejs.org/) installed.
-2. Navigate to the project directory:
+- **Instant pairing:** 4-digit code or QR code
+- **Multiple files:** Send as many files as you want
+- **Queue and cancel:** Manage transfers in real-time
+- **No compression:** Files transfer at original quality
+- **No permanent storage:** Files are deleted immediately after transfer
+- **Clipboard support:** Share clipboard content directly
+- **PWA:** Install as an app on your device
+- **Direct save:** Save files directly to disk when your browser allows
+- **WebRTC encryption:** Transport layer encryption + AES-GCM when available
+
+---
+
+## 🔐 How AirDows Transfers Your Files
+
+AirDows attempts to route your files directly between devices using WebRTC. When that's not possible due to network restrictions (corporate firewalls, carrier-grade NAT, etc.), encrypted traffic may temporarily route through a TURN relay server.
+
+**Important:** Transfers are encrypted in transit. Files are not permanently stored on any server and are deleted immediately after successful transfer.
+
+For detailed security information, visit: https://airdows.com/seguridad
+
+---
+
+## 🏁 How to Run Locally
+
+1. Ensure [Node.js](https://nodejs.org/) is installed.
+2. Install dependencies:
    ```bash
-   cd C:\Users\samue\Projects\airdrop-mvp
+   npm install
    ```
-3. Start the signaling server:
+3. Start the server:
    ```bash
    npm start
    ```
 4. The server will output:
    ```text
    Signaling server running on http://localhost:3000
-   Local network access via http://<YOUR_LOCAL_IP>:3000
    ```
 
 ---
 
-## Control de costos TURN
+## 🔧 Environment Variables
 
-El panel privado de operaciones está disponible en `/admin/dashboard`. Antes de desplegar,
-define estas variables de entorno:
+Key variables for deployment:
 
 ```bash
-ADMIN_DASHBOARD_TOKEN=<token-largo-y-aleatorio>
+TURN_URLS=<comma-separated-turn-servers>
+TURN_USERNAME=<turn-username>
+TURN_CREDENTIAL=<turn-credential>
+ADMIN_DASHBOARD_TOKEN=<admin-auth-token>
 FREE_RELAY_BUDGET_BYTES=262144000
-METRICS_DATABASE_URL=postgresql://usuario:contraseña@host:5432/base
+METRICS_DATABASE_URL=postgresql://user:password@host:5432/dbname
 METRICS_DATABASE_SSL=true
+TELEGRAM_BOT_TOKEN=<telegram-bot-token>
+TELEGRAM_CHAT_ID=<chat-id>
 ```
-
-Ábrelo con autenticación HTTP Basic: usuario `admin` y como contraseña el valor de
-`ADMIN_DASHBOARD_TOKEN`. El presupuesto indicado equivale a 250 MiB por sesión gratuita
-que use relay TURN; al agotarse, el cliente recibe `PRO_REQUIRED`.
-
-`METRICS_DATABASE_URL` es opcional. Al configurarlo, AirDows crea automáticamente una tabla
-diaria con métricas agregadas y el panel conserva su historial tras reinicios de Railway.
-Usa `METRICS_DATABASE_SSL=true` para una base de datos externa como Supabase o Neon.
-
-### Alertas de operación por Telegram
-
-Para recibir avisos privados, configura estas variables en Railway:
-
-```bash
-TELEGRAM_BOT_TOKEN=<token-de-BotFather>
-TELEGRAM_CHAT_ID=<chat-id-privado>
-```
-
-El panel incluye `Probar Telegram`. Las alertas automáticas tienen un enfriamiento de una hora
-y se disparan con al menos 20 muestras cuando los fallos superan 10%, el relay supera 35%, cada
-5 bloqueos Free, o cuando PostgreSQL no está disponible. Los umbrales son configurables mediante
-`ALERT_MIN_SAMPLES`, `ALERT_FAILURE_PERCENT`, `ALERT_RELAY_PERCENT`, `ALERT_PRO_REQUIRED_COUNT`
-y `ALERT_COOLDOWN_MS`.
 
 ---
 
-## 📱 How to Use (Local Network Transfer)
+## 📝 License
 
-For transferring files between a **desktop** and a **mobile phone**:
+See LICENSE file in this repository.
 
-1. **Start as Receiver:**
-   - On your desktop browser, navigate to `http://localhost:3000`.
-   - Under **Set up as Receiver**, click **Generate Pairing Code**.
-   - A unique 4-digit code (e.g., `4839`) and a QR code will fade in.
+---
 
-2. **Connect from Sender (Mobile):**
-   - Ensure your phone is connected to the **same Wi-Fi network** as your desktop.
-   - **Method A (Easiest):** Scan the QR code displayed on the desktop using your mobile camera. It will open the URL with the auto-pairing parameter (e.g. `http://192.168.1.50:3000/?code=4839`) and connect automatically!
-   - **Method B:** Open your mobile browser, navigate to your desktop's local IP address (e.g., `http://192.168.1.50:3000`), enter the 4-digit code shown on the desktop, and click **Connect Device**.
-
-3. **Transfer Files:**
-   - Once connected, both screens will change to the **Active Connection** screen showing `Secured P2P Connection Active`.
-   - On the sender device, drag-and-drop any file into the designated transfer area, or click the zone to choose a file from your device files / photo library.
-   - The file will be streamed directly from peer to peer. You'll see real-time progress, percentage, and instantaneous transfer speeds (e.g., `12.5 MB/s`).
-   - On the receiving device, once the transfer hits 100%, the browser will instantly prompt to save or automatically download the reconstructed file in bytes.
-   - Click **Transfer Another File** to send more, or **Disconnect** to close the session.
+**Questions or feedback?** Visit https://airdows.com
