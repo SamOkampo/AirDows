@@ -6,8 +6,9 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const {
+  getHttpRateLimitKey,
   IpRateLimiter,
-  normalizeClientIp,
+  resolveClientIp,
   PairingSecurity
 } = require('./pairing-security');
 
@@ -21,8 +22,6 @@ if (typeof process.loadEnvFile === 'function') {
 const { MetricsStore } = require('./metrics-store');
 
 const app = express();
-// The production host sits behind a reverse proxy and forwards the client IP.
-app.set('trust proxy', 1);
 const server = http.createServer(app);
 
 // Secure CORS configuration: restrict to same origin or configured hosts
@@ -83,6 +82,7 @@ const apiLimiter = rateLimit({
   max: 100,
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: (req) => getHttpRateLimitKey(req, process.env.RAILWAY_ENVIRONMENT_ID),
   message: 'Too many requests from this IP. Please try again in a minute.'
 });
 
@@ -100,11 +100,13 @@ const connectionLimiter = new IpRateLimiter({
 });
 
 function getClientIp(socket) {
-  const forwardedHeader = socket.handshake.headers['x-forwarded-for'];
-  const forwardedValue = Array.isArray(forwardedHeader) ? forwardedHeader[0] : forwardedHeader;
-  // The trusted edge proxy must overwrite X-Forwarded-For; direct untrusted access must not supply it.
-  const clientIp = forwardedValue?.split(',')[0]?.trim() || socket.handshake.address || 'unknown';
-  return normalizeClientIp(clientIp);
+  // Railway is trusted to set X-Real-IP; all proxy IP headers are ignored elsewhere.
+  return resolveClientIp({
+    railwayEnvironmentId: process.env.RAILWAY_ENVIRONMENT_ID,
+    xRealIp: socket.handshake.headers['x-real-ip'],
+    remoteAddress: socket.request?.socket?.remoteAddress,
+    handshakeAddress: socket.handshake.address
+  });
 }
 
 function maskIpAddress(ip) {
