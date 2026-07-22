@@ -1,11 +1,15 @@
 class WebRTCManager {
-  constructor(socketManager) {
+  constructor(socketManager, options = {}) {
     this.CHUNK_SIZE = 128 * 1024;
     this.DESKTOP_CHUNK_SIZE = 256 * 1024;
     this.FALLBACK_CHUNK_SIZE = 64 * 1024;
     this.BUFFER_THRESHOLD = 16 * 1024 * 1024;
     this.BUFFER_LOW_THRESHOLD = 4 * 1024 * 1024;
     this.RECEIVER_READY_TIMEOUT = 15000;
+    this.DELIVERY_ACK_TIMEOUT = Number.isSafeInteger(options.deliveryAckTimeout)
+      ? Math.max(1, options.deliveryAckTimeout)
+      : 30000;
+    this.MAX_TRANSFER_ID_LENGTH = 128;
     this.socketManager = socketManager;
     this.peerConnection = null;
     this.dataChannel = null;
@@ -33,6 +37,9 @@ class WebRTCManager {
     this.isClosing = false;
     this.activeSendTransfer = null;
     this.resumeWaiters = new Map();
+    this.deliveryWaiters = new Map();
+    this.incomingMessageChain = Promise.resolve();
+    this.dataChannelGeneration = 0;
     this.encryption = this.createEncryptionState();
     this.relayBudget = { plan: 'free', limitBytes: Number.POSITIVE_INFINITY, usedBytes: 0, blocked: false };
     this.pendingRelayUsageBytes = 0;
@@ -69,7 +76,9 @@ class WebRTCManager {
       writable: null,
       writeChain: Promise.resolve(),
       writeFailed: false,
-      memoryChunkCount: 0
+      memoryChunkCount: 0,
+      finalizing: false,
+      terminalState: null
     };
   }
 
@@ -171,6 +180,11 @@ class WebRTCManager {
   }
 
   setDataChannel(channel) {
+    if (this.dataChannel && this.dataChannel !== channel) {
+      this.rejectAllDeliveryWaiters('DATA_CHANNEL_REPLACED', 'Data connection was replaced.');
+    }
+
+    const channelGeneration = ++this.dataChannelGeneration;
     this.dataChannel = channel;
     this.dataChannel.binaryType = 'arraybuffer';
     this.dataChannel.bufferedAmountLowThreshold = this.BUFFER_LOW_THRESHOLD;
@@ -183,7 +197,10 @@ class WebRTCManager {
     };
 
     this.dataChannel.onclose = () => {
+      if (this.dataChannel !== channel || this.dataChannelGeneration !== channelGeneration) return;
+      this.dataChannelGeneration += 1;
       console.log('Data channel state is: CLOSED');
+      this.rejectAllDeliveryWaiters('DATA_CHANNEL_CLOSED', 'Data connection closed before delivery confirmation.');
       this.stopNetworkDiagnostics();
       if (!this.isClosing && this.onConnectionStateChange) {
         this.onConnectionStateChange('disconnected');
@@ -191,20 +208,63 @@ class WebRTCManager {
     };
 
     this.dataChannel.onerror = (error) => {
+      if (this.dataChannel !== channel || this.dataChannelGeneration !== channelGeneration) return;
+      this.dataChannelGeneration += 1;
       console.error('Data channel error:', error);
+      this.rejectAllDeliveryWaiters('DATA_CHANNEL_ERROR', 'Data connection failed before delivery confirmation.');
       this.cleanupReceiverDiskStream().catch((err) => {
         console.error('Error cleaning receiver stream after data channel error:', err);
       });
     };
 
     this.dataChannel.onmessage = (event) => {
-      this.handleIncomingMessage(event.data).catch((err) => {
-        console.error('Error handling incoming WebRTC message:', err);
-        this.cleanupReceiverDiskStream().catch((cleanupErr) => {
-          console.error('Error cleaning receiver stream after incoming message failure:', cleanupErr);
-        });
-      });
+      if (this.dataChannel !== channel || this.dataChannelGeneration !== channelGeneration) return;
+      this.enqueueIncomingMessage(event.data, channelGeneration);
     };
+  }
+
+  enqueueIncomingMessage(data, channelGeneration = this.dataChannelGeneration) {
+    const rejectMetadata = this.isUnexpectedMetadataAtArrival(data);
+    const task = this.incomingMessageChain.then(() => {
+      if (channelGeneration !== this.dataChannelGeneration) return;
+      if (rejectMetadata) {
+        console.warn('Ignoring unexpected file metadata while another transfer is active');
+        return;
+      }
+      return this.handleIncomingMessage(data, channelGeneration);
+    });
+    this.incomingMessageChain = task.catch(async (err) => {
+      if (channelGeneration !== this.dataChannelGeneration) return;
+      console.error('Error handling incoming WebRTC message:', err.message);
+      try {
+        await this.failIncomingTransfer(
+          err.deliveryReason || 'FINALIZATION_FAILED',
+          err,
+          true,
+          channelGeneration
+        );
+      } catch (cleanupErr) {
+        console.error('Error cleaning receiver state after incoming message failure:', cleanupErr.message);
+      }
+    });
+    return this.incomingMessageChain;
+  }
+
+  isUnexpectedMetadataAtArrival(data) {
+    if (typeof data !== 'string' || !this.receiverState.metadata) return false;
+    let message;
+    try {
+      message = JSON.parse(data);
+    } catch (err) {
+      return false;
+    }
+    if (!message || message.type !== 'metadata') return false;
+
+    const current = this.receiverState;
+    return current.finalizing || Boolean(current.terminalState) ||
+      current.metadata.transferId !== message.transferId ||
+      current.metadata.name !== message.name ||
+      current.metadata.size !== message.size;
   }
 
   async startEncryptionSession() {
@@ -370,21 +430,21 @@ class WebRTCManager {
     }
   }
 
-  async handleIncomingMessage(data) {
+  async handleIncomingMessage(data, channelGeneration = this.dataChannelGeneration) {
     if (typeof data === 'string') {
-      await this.handleIncomingTextMessage(data);
+      await this.handleIncomingTextMessage(data, channelGeneration);
       return;
     }
 
     if (data instanceof ArrayBuffer) {
-      await this.handleIncomingFileChunk(data);
+      await this.handleIncomingFileChunk(data, channelGeneration);
       return;
     }
 
-    console.warn('Received unsupported data channel payload:', data);
+    console.warn('Received unsupported data channel payload');
   }
 
-  async handleIncomingFileChunk(data) {
+  async handleIncomingFileChunk(data, channelGeneration = this.dataChannelGeneration) {
     const state = this.receiverState;
     if (!state.metadata) {
       console.error('Received binary chunk without file metadata!');
@@ -394,10 +454,12 @@ class WebRTCManager {
     const chunkData = state.metadata.encryption === 'aes-gcm-256'
       ? await this.decryptChunk(data)
       : data;
+    if (channelGeneration !== this.dataChannelGeneration || this.receiverState !== state) return;
 
     if (state.receivedSize + chunkData.byteLength > state.metadata.size) {
       const error = new Error('Received more data than expected.');
       error.code = 'UNEXPECTED_TRANSFER_SIZE';
+      error.deliveryReason = 'SIZE_MISMATCH';
       throw error;
     }
 
@@ -405,11 +467,17 @@ class WebRTCManager {
       try {
         state.writeChain = state.writeChain.then(() => state.writable.write(chunkData));
         await state.writeChain;
+        if (channelGeneration !== this.dataChannelGeneration || this.receiverState !== state) {
+          if (this.receiverState === state) state.finalizing = false;
+          return;
+        }
       } catch (err) {
         state.writeFailed = true;
         await this.abortReceiverDiskStream();
-        this.reportTransferError('disk-write', err, state.metadata.name);
-        throw new Error(`No se pudo escribir el archivo en disco: ${err.message}`);
+        const writeError = new Error('The received file could not be written.');
+        writeError.code = 'RECEIVER_WRITE_FAILED';
+        writeError.deliveryReason = 'WRITE_FAILED';
+        throw writeError;
       }
     } else {
       state.receivedBuffers.push(chunkData);
@@ -423,13 +491,10 @@ class WebRTCManager {
 
     state.receivedSize += chunkData.byteLength;
     this.reportTransferProgress(state.receivedSize, state.metadata.size, state.metadata.name, false);
-
-    if (state.receivedSize >= state.metadata.size) {
-      await this.finalizeIncomingFile();
-    }
   }
 
-  async handleIncomingTextMessage(rawText) {
+  async handleIncomingTextMessage(rawText, channelGeneration = this.dataChannelGeneration) {
+    if (channelGeneration !== this.dataChannelGeneration) return;
     let message = null;
 
     try {
@@ -449,37 +514,73 @@ class WebRTCManager {
 
     if (message.type === 'metadata') {
       if (!this.isValidFileMetadata(message)) {
-        console.error('Received invalid file metadata:', message);
+        console.error('Received invalid file metadata');
         await this.resetReceiverState();
         return;
       }
 
+      const current = this.receiverState;
+      if (current.metadata) {
+        const sameTransfer = current.metadata.transferId === message.transferId &&
+          current.metadata.name === message.name &&
+          current.metadata.size === message.size;
+        if (!sameTransfer || current.finalizing || current.terminalState) {
+          console.warn('Ignoring unexpected file metadata while another transfer is active');
+          return;
+        }
+      }
+
       await this.prepareIncomingFile(message);
+      if (channelGeneration !== this.dataChannelGeneration) return;
       this.sendReceiverReady(message.transferId);
       return;
     }
 
     if (message.type === 'receiver-ready') {
       const waiter = this.resumeWaiters.get(message.transferId);
-      if (waiter) {
+      const transfer = this.activeSendTransfer;
+      if (waiter && transfer && transfer.transferId === message.transferId &&
+          this.isValidTransferSize(message.offset) && this.isValidTransferSize(message.size) &&
+          message.size === transfer.totalBytes) {
         this.resumeWaiters.delete(message.transferId);
-        waiter(Math.max(0, Math.min(Number(message.offset) || 0, Number(message.size) || 0)));
+        waiter(Math.min(message.offset, transfer.totalBytes));
       }
       return;
     }
 
     if (message.type === 'resume-offset') {
       const waiter = this.resumeWaiters.get(message.transferId);
-      if (waiter) {
+      const transfer = this.activeSendTransfer;
+      if (waiter && transfer && transfer.transferId === message.transferId &&
+          this.isValidTransferSize(message.offset) && this.isValidTransferSize(message.size) &&
+          message.size === transfer.totalBytes) {
         this.resumeWaiters.delete(message.transferId);
-        waiter(Math.max(0, Math.min(Number(message.offset) || 0, Number(message.size) || 0)));
+        waiter(Math.min(message.offset, transfer.totalBytes));
       }
+      return;
+    }
+
+    if (message.type === 'transfer-ack') {
+      this.handleTransferAck(message);
+      return;
+    }
+
+    if (message.type === 'transfer-failed') {
+      this.handleTransferFailed(message);
+      return;
+    }
+
+    if (message.type === 'transfer-finished') {
+      if (!this.isValidTransferTerminalMessage(message, true)) return;
+      const state = this.receiverState;
+      if (!state.metadata || state.metadata.transferId !== message.transferId || state.terminalState) return;
+      await this.finalizeIncomingFile(message, channelGeneration);
       return;
     }
 
     if (message.type === 'clipboard') {
       if (typeof message.text !== 'string') {
-        console.error('Received clipboard message without text payload:', message);
+        console.error('Received clipboard message without text payload');
         return;
       }
       this.emitClipboardMessage(message.text);
@@ -487,13 +588,31 @@ class WebRTCManager {
     }
 
     if (message.type === 'transfer-cancelled') {
-      const fileName = typeof message.name === 'string' ? message.name : '';
-      await this.cleanupReceiverDiskStream();
-      await this.resetReceiverState();
-      this.stopNetworkDiagnostics();
+      if (!this.hasExactMessageFields(message, ['type', 'transferId']) ||
+          !this.isValidTransferId(message.transferId)) return;
 
-      if (this.onFileTransferCancelled) {
-        this.onFileTransferCancelled(fileName, false);
+      const transfer = this.activeSendTransfer;
+      if (transfer && transfer.transferId === message.transferId && !transfer.cancelled) {
+        const cancelError = this.createTransferCancelledError('Transfer cancelled by receiver.');
+        const settled = this.rejectDeliveryWaiter(transfer.transferId, cancelError, 'cancelled');
+        if (!settled && !this.transitionSenderTerminalState(transfer, 'cancelled')) return;
+        transfer.cancelled = true;
+        transfer.abortController.abort();
+        this.invokeSenderTerminalCallback(transfer, 'cancelled', () => {
+          if (this.onFileTransferCancelled) this.onFileTransferCancelled(transfer.fileName, false);
+        });
+        return;
+      }
+
+      const state = this.receiverState;
+      if (state.metadata && state.metadata.transferId === message.transferId && !state.terminalState) {
+        const fileName = state.metadata.name;
+        await this.failIncomingTransfer('CANCELLED');
+        try {
+          if (this.onFileTransferCancelled) this.onFileTransferCancelled(fileName, false);
+        } catch (err) {
+          console.error('Receiver cancellation callback failed');
+        }
       }
       return;
     }
@@ -506,8 +625,7 @@ class WebRTCManager {
     const canResume = current.metadata &&
       current.metadata.transferId === metadata.transferId &&
       current.metadata.name === metadata.name &&
-      current.metadata.size === metadata.size &&
-      current.receivedSize > 0;
+      current.metadata.size === metadata.size;
 
     if (canResume) {
       console.log(`Resuming incoming transfer at byte ${current.receivedSize}`);
@@ -581,7 +699,7 @@ class WebRTCManager {
 
     const state = this.receiverState;
     const offset = state.metadata && state.metadata.transferId === transferId
-      ? state.receivedSize
+      ? Math.min(state.receivedSize, state.metadata.size)
       : 0;
 
     this.dataChannel.send(JSON.stringify({
@@ -593,47 +711,145 @@ class WebRTCManager {
     }));
   }
 
-  async finalizeIncomingFile() {
+  sendDeliveryControl(message) {
+    if (!this.dataChannel || this.dataChannel.readyState !== 'open') return false;
+    try {
+      this.dataChannel.send(JSON.stringify(message));
+      return true;
+    } catch (err) {
+      console.warn('Delivery control message could not be sent');
+      return false;
+    }
+  }
+
+  async finalizeIncomingFile(finishedMessage, channelGeneration = this.dataChannelGeneration) {
     const state = this.receiverState;
     const metadata = state.metadata;
-    if (!metadata) return;
+    if (!metadata || state.finalizing || state.terminalState ||
+        channelGeneration !== this.dataChannelGeneration) return;
 
-    this.stopNetworkDiagnostics();
+    state.finalizing = true;
 
-    if (state.writeMode === 'disk' && state.writable) {
-      try {
-        await state.writeChain;
-        await state.writable.close();
-        state.writable = null;
-
-        if (this.onFileTransferComplete) {
-          this.onFileTransferComplete(null, metadata.name, {
-            writeMode: 'disk',
-            savedToDisk: true
-          });
-        }
-      } catch (err) {
-        console.error('Error finalizing direct-to-disk file:', err);
-        await this.cleanupReceiverDiskStream();
-        throw err;
-      } finally {
-        this.receiverState = this.createEmptyReceiverState();
-      }
+    if (finishedMessage.size !== metadata.size || state.receivedSize !== metadata.size) {
+      await this.failIncomingTransfer('SIZE_MISMATCH');
       return;
     }
 
-    console.log('File transfer complete, reconstructing blob...');
-    const fileBlob = new Blob(state.receivedBuffers, { type: metadata.mime });
-    state.receivedBuffers.length = 0;
+    if (state.writeFailed) {
+      await this.failIncomingTransfer('WRITE_FAILED');
+      return;
+    }
 
-    if (this.onFileTransferComplete) {
-      this.onFileTransferComplete(fileBlob, metadata.name, {
+    let fileBlob = null;
+    let completionOptions = null;
+
+    if (state.writeMode === 'disk') {
+      if (!state.writable) {
+        await this.failIncomingTransfer('FINALIZATION_FAILED');
+        return;
+      }
+
+      try {
+        await state.writeChain;
+        if (channelGeneration !== this.dataChannelGeneration || this.receiverState !== state) return;
+        if (state.writeFailed) {
+          await this.failIncomingTransfer('WRITE_FAILED');
+          return;
+        }
+        await state.writable.close();
+        state.writable = null;
+        if (channelGeneration !== this.dataChannelGeneration || this.receiverState !== state) {
+          if (this.receiverState === state) this.receiverState = this.createEmptyReceiverState();
+          return;
+        }
+        completionOptions = {
+          writeMode: 'disk',
+          savedToDisk: true
+        };
+      } catch (err) {
+        await this.failIncomingTransfer(
+          state.writeFailed ? 'WRITE_FAILED' : 'FINALIZATION_FAILED',
+          err
+        );
+        return;
+      }
+    } else {
+      try {
+        fileBlob = new Blob(state.receivedBuffers, { type: metadata.mime });
+      } catch (err) {
+        await this.failIncomingTransfer('FINALIZATION_FAILED', err);
+        return;
+      }
+
+      if (fileBlob.size !== metadata.size) {
+        await this.failIncomingTransfer('SIZE_MISMATCH');
+        return;
+      }
+
+      completionOptions = {
         writeMode: 'memory',
         savedToDisk: false
+      };
+    }
+
+    if (channelGeneration !== this.dataChannelGeneration || this.receiverState !== state) return;
+    state.terminalState = 'completed';
+    this.stopNetworkDiagnostics();
+    this.sendDeliveryControl({
+      type: 'transfer-ack',
+      transferId: metadata.transferId,
+      size: metadata.size
+    });
+
+    try {
+      if (this.onFileTransferComplete) {
+        this.onFileTransferComplete(fileBlob, metadata.name, completionOptions);
+      }
+    } catch (err) {
+      console.error('Receiver completion callback failed');
+    } finally {
+      state.receivedBuffers.length = 0;
+      if (this.receiverState === state) {
+        this.receiverState = this.createEmptyReceiverState();
+      }
+    }
+  }
+
+  async failIncomingTransfer(
+    reason,
+    error = null,
+    notifyPeer = true,
+    channelGeneration = this.dataChannelGeneration
+  ) {
+    const state = this.receiverState;
+    const metadata = state && state.metadata;
+    if (!metadata || state.terminalState || channelGeneration !== this.dataChannelGeneration) return false;
+
+    state.terminalState = reason === 'CANCELLED' ? 'cancelled' : 'failed';
+    this.stopNetworkDiagnostics();
+
+    if (notifyPeer) {
+      this.sendDeliveryControl({
+        type: 'transfer-failed',
+        transferId: metadata.transferId,
+        reason: this.isAllowedDeliveryFailureReason(reason) ? reason : 'FINALIZATION_FAILED'
       });
     }
 
-    this.receiverState = this.createEmptyReceiverState();
+    await this.cleanupReceiverDiskStream();
+    state.receivedBuffers.length = 0;
+    if (this.receiverState === state) {
+      this.receiverState = this.createEmptyReceiverState();
+    }
+
+    if (error || reason !== 'CANCELLED') {
+      this.reportTransferError(
+        reason === 'WRITE_FAILED' ? 'write' : 'protocol',
+        error || new Error('The receiver could not finalize the transfer.'),
+        metadata.name
+      );
+    }
+    return true;
   }
 
   supportsDiskWriteMode() {
@@ -689,14 +905,154 @@ class WebRTCManager {
     return (
       typeof message.name === 'string' &&
       message.name.trim().length > 0 &&
-      typeof message.transferId === 'string' &&
-      message.transferId.trim().length > 0 &&
+      this.isValidTransferId(message.transferId) &&
       Number.isSafeInteger(message.size) &&
       message.size >= 0 &&
       typeof message.mime === 'string' &&
       message.mime.trim().length > 0 &&
       (message.encryption === null || message.encryption === undefined || message.encryption === 'aes-gcm-256')
     );
+  }
+
+  isValidTransferId(transferId) {
+    return typeof transferId === 'string' &&
+      transferId.trim().length > 0 &&
+      transferId.length <= this.MAX_TRANSFER_ID_LENGTH;
+  }
+
+  isValidTransferSize(size) {
+    return Number.isSafeInteger(size) && size >= 0;
+  }
+
+  hasExactMessageFields(message, fields) {
+    if (!message || typeof message !== 'object' || Array.isArray(message)) return false;
+    const keys = Object.keys(message).sort();
+    return keys.length === fields.length &&
+      fields.slice().sort().every((field, index) => keys[index] === field);
+  }
+
+  isValidTransferTerminalMessage(message, requireSize = false) {
+    const fields = requireSize
+      ? ['type', 'transferId', 'size']
+      : ['type', 'transferId', 'reason'];
+    if (!this.hasExactMessageFields(message, fields) || !this.isValidTransferId(message.transferId)) {
+      return false;
+    }
+    return requireSize
+      ? this.isValidTransferSize(message.size)
+      : this.isAllowedDeliveryFailureReason(message.reason);
+  }
+
+  isAllowedDeliveryFailureReason(reason) {
+    return ['SIZE_MISMATCH', 'WRITE_FAILED', 'FINALIZATION_FAILED', 'CANCELLED'].includes(reason);
+  }
+
+  handleTransferAck(message) {
+    if (!message || message.type !== 'transfer-ack' || !this.isValidTransferTerminalMessage(message, true)) return false;
+    const waiter = this.deliveryWaiters.get(message.transferId);
+    if (!waiter || waiter.size !== message.size) return false;
+    return this.settleDeliveryWaiter(message.transferId, 'resolve', null, 'completed');
+  }
+
+  handleTransferFailed(message) {
+    if (!message || message.type !== 'transfer-failed' || !this.isValidTransferTerminalMessage(message, false)) return false;
+    const waiter = this.deliveryWaiters.get(message.transferId);
+    if (!waiter) return false;
+
+    const error = new Error('The receiver rejected the transfer.');
+    error.code = 'DELIVERY_REJECTED';
+    error.reason = message.reason;
+    return this.settleDeliveryWaiter(message.transferId, 'reject', error, 'failed');
+  }
+
+  createDeliveryWaiter(transferId, size) {
+    if (!this.isValidTransferId(transferId) || !this.isValidTransferSize(size)) {
+      return Promise.reject(new Error('Invalid delivery waiter parameters.'));
+    }
+
+    this.rejectDeliveryWaiter(
+      transferId,
+      this.createDeliveryError('DELIVERY_REPLACED', 'Delivery confirmation was replaced.')
+    );
+
+    return new Promise((resolve, reject) => {
+      const waiter = {
+        resolve,
+        reject,
+        size,
+        transfer: this.activeSendTransfer && this.activeSendTransfer.transferId === transferId
+          ? this.activeSendTransfer
+          : null,
+        settled: false,
+        timeout: null
+      };
+
+      waiter.timeout = setTimeout(() => {
+        this.settleDeliveryWaiter(
+          transferId,
+          'reject',
+          this.createDeliveryError('DELIVERY_ACK_TIMEOUT', 'Delivery confirmation timed out.'),
+          'failed'
+        );
+      }, this.DELIVERY_ACK_TIMEOUT);
+      if (typeof waiter.timeout.unref === 'function') waiter.timeout.unref();
+
+      this.deliveryWaiters.set(transferId, waiter);
+    });
+  }
+
+  createDeliveryError(code, message) {
+    const error = new Error(message);
+    error.code = code;
+    return error;
+  }
+
+  createTransferCancelledError(message = 'Transfer cancelled.') {
+    const error = new Error(message);
+    error.name = 'TransferCancelledError';
+    error.code = 'TRANSFER_CANCELLED';
+    return error;
+  }
+
+  transitionSenderTerminalState(transfer, terminalState) {
+    if (!transfer || transfer.terminalState) return false;
+    transfer.terminalState = terminalState;
+    return true;
+  }
+
+  invokeSenderTerminalCallback(transfer, terminalState, callback) {
+    if (!transfer || transfer.terminalState !== terminalState || transfer.terminalCallbackInvoked) return false;
+    transfer.terminalCallbackInvoked = true;
+    try {
+      callback();
+    } catch (err) {
+      console.error('Sender terminal callback failed');
+    }
+    return true;
+  }
+
+  settleDeliveryWaiter(transferId, outcome, error, terminalState = outcome === 'resolve' ? 'completed' : 'failed') {
+    const waiter = this.deliveryWaiters.get(transferId);
+    if (!waiter || waiter.settled) return false;
+    if (waiter.transfer && !this.transitionSenderTerminalState(waiter.transfer, terminalState)) return false;
+
+    waiter.settled = true;
+    clearTimeout(waiter.timeout);
+    this.deliveryWaiters.delete(transferId);
+
+    if (outcome === 'resolve') waiter.resolve();
+    else waiter.reject(error);
+    return true;
+  }
+
+  rejectDeliveryWaiter(transferId, error, terminalState = 'failed') {
+    return this.settleDeliveryWaiter(transferId, 'reject', error, terminalState);
+  }
+
+  rejectAllDeliveryWaiters(code, message) {
+    for (const transferId of [...this.deliveryWaiters.keys()]) {
+      this.rejectDeliveryWaiter(transferId, this.createDeliveryError(code, message));
+    }
   }
 
   emitClipboardMessage(text) {
@@ -729,6 +1085,8 @@ class WebRTCManager {
       transferId: options.transferId || this.createTransferId(),
       reader: null,
       cancelled: false,
+      terminalState: null,
+      terminalCallbackInvoked: false,
       proRequired: false,
       abortController: new AbortController(),
       bytesTransferred: 0,
@@ -737,6 +1095,11 @@ class WebRTCManager {
       relayChunks: 0,
       relayChunkSize: CHUNK_SIZE
     };
+    if (!this.isValidTransferId(transfer.transferId) || !this.isValidTransferSize(transfer.totalBytes)) {
+      const error = new Error('Invalid transfer metadata.');
+      error.code = 'INVALID_TRANSFER_METADATA';
+      throw error;
+    }
     this.activeSendTransfer = transfer;
 
     if (this.onFileTransferStart) {
@@ -815,7 +1178,10 @@ class WebRTCManager {
               transfer.proRequired = true;
               this.notifyPeerTransferCancelled(transfer);
               const error = this.createProRequiredError();
-              this.reportTransferError('relay-budget', error, file.name);
+              this.transitionSenderTerminalState(transfer, 'failed');
+              this.invokeSenderTerminalCallback(transfer, 'failed', () => {
+                this.reportTransferError('relay-budget', error, file.name);
+              });
               throw error;
             }
 
@@ -839,33 +1205,66 @@ class WebRTCManager {
       }
 
       this.throwIfTransferCancelled(transfer);
-      console.log('Finished sending all chunks for:', file.name);
+      const deliveryPromise = this.createDeliveryWaiter(transfer.transferId, file.size);
+      deliveryPromise.catch(() => {});
+
+      try {
+        await this.sendWithBackpressure(
+          JSON.stringify({
+            type: 'transfer-finished',
+            transferId: transfer.transferId,
+            size: file.size
+          }),
+          BUFFER_THRESHOLD,
+          transfer.abortController.signal
+        );
+      } catch (err) {
+        this.rejectDeliveryWaiter(transfer.transferId, err);
+        throw err;
+      }
+
+      await deliveryPromise;
+      this.throwIfTransferCancelled(transfer);
       this.stopNetworkDiagnostics();
 
-      if (this.onFileTransferComplete) {
-        this.onFileTransferComplete(null, file.name, {
-          writeMode: 'send',
-          connectionType: performanceProfile.connectionType,
-          relayChunks: transfer.relayChunks,
-          relayChunkSize: transfer.relayChunkSize
-        });
-      }
+      this.invokeSenderTerminalCallback(transfer, 'completed', () => {
+        if (this.onFileTransferComplete) {
+          this.onFileTransferComplete(null, file.name, {
+            writeMode: 'send',
+            connectionType: performanceProfile.connectionType,
+            relayChunks: transfer.relayChunks,
+            relayChunkSize: transfer.relayChunkSize
+          });
+        }
+      });
     } catch (err) {
       this.stopNetworkDiagnostics();
 
       if (transfer.proRequired || err.name === 'ProRequiredError') {
+        this.transitionSenderTerminalState(transfer, 'failed');
         throw this.createProRequiredError();
       }
 
       if (transfer.cancelled || err.name === 'AbortError') {
-        const cancelError = new Error('Transfer cancelled.');
-        cancelError.name = 'TransferCancelledError';
-        throw cancelError;
+        this.transitionSenderTerminalState(transfer, 'cancelled');
+        throw this.createTransferCancelledError();
       }
+
+      if (['DELIVERY_ACK_TIMEOUT', 'DELIVERY_REJECTED'].includes(err.code)) {
+        this.invokeSenderTerminalCallback(transfer, 'failed', () => {
+          this.reportTransferError('protocol', err, file.name);
+        });
+      }
+
+      this.transitionSenderTerminalState(transfer, 'failed');
 
       console.error('Error during file stream send:', err);
       throw err;
     } finally {
+      this.rejectDeliveryWaiter(
+        transfer.transferId,
+        this.createDeliveryError('DELIVERY_ABORTED', 'Delivery confirmation was abandoned.')
+      );
       this.flushRelayUsage();
       reader.releaseLock();
       if (this.activeSendTransfer === transfer) {
@@ -1010,11 +1409,10 @@ class WebRTCManager {
   }
 
   notifyPeerTransferCancelled(transfer) {
-    if (!this.dataChannel || this.dataChannel.readyState !== 'open') return;
-    this.dataChannel.send(JSON.stringify({
+    this.sendDeliveryControl({
       type: 'transfer-cancelled',
-      name: transfer.fileName
-    }));
+      transferId: transfer.transferId
+    });
   }
 
   handleProRequired() {
@@ -1026,7 +1424,12 @@ class WebRTCManager {
     transfer.abortController.abort();
     if (transfer.reader) transfer.reader.cancel().catch(() => {});
     this.notifyPeerTransferCancelled(transfer);
-    this.reportTransferError('relay-budget', this.createProRequiredError(), transfer.fileName);
+    const error = this.createProRequiredError();
+    const settled = this.rejectDeliveryWaiter(transfer.transferId, error, 'failed');
+    if (!settled) this.transitionSenderTerminalState(transfer, 'failed');
+    this.invokeSenderTerminalCallback(transfer, 'failed', () => {
+      this.reportTransferError('relay-budget', error, transfer.fileName);
+    });
   }
 
   reportTransferProgress(bytesTransferred, totalBytes, fileName, isSending) {
@@ -1045,8 +1448,11 @@ class WebRTCManager {
 
   cancelActiveTransfer() {
     const transfer = this.activeSendTransfer;
-    if (!transfer || transfer.cancelled) return false;
+    if (!transfer || transfer.cancelled || transfer.terminalState) return false;
 
+    const cancelError = this.createTransferCancelledError();
+    const settled = this.rejectDeliveryWaiter(transfer.transferId, cancelError, 'cancelled');
+    if (!settled && !this.transitionSenderTerminalState(transfer, 'cancelled')) return false;
     transfer.cancelled = true;
     transfer.abortController.abort();
     this.stopNetworkDiagnostics();
@@ -1055,16 +1461,14 @@ class WebRTCManager {
       transfer.reader.cancel().catch(() => {});
     }
 
-    if (this.dataChannel && this.dataChannel.readyState === 'open') {
-      this.dataChannel.send(JSON.stringify({
-        type: 'transfer-cancelled',
-        name: transfer.fileName
-      }));
-    }
+    this.sendDeliveryControl({
+      type: 'transfer-cancelled',
+      transferId: transfer.transferId
+    });
 
-    if (this.onFileTransferCancelled) {
-      this.onFileTransferCancelled(transfer.fileName, true);
-    }
+    this.invokeSenderTerminalCallback(transfer, 'cancelled', () => {
+      if (this.onFileTransferCancelled) this.onFileTransferCancelled(transfer.fileName, true);
+    });
 
     return true;
   }
@@ -1342,12 +1746,21 @@ class WebRTCManager {
   close() {
     console.log('Cleaning up WebRTC connections...');
     this.isClosing = true;
+    this.dataChannelGeneration += 1;
     this.stopNetworkDiagnostics();
 
     if (this.activeSendTransfer) {
       this.activeSendTransfer.cancelled = true;
       this.activeSendTransfer.abortController.abort();
+      const cancelError = this.createTransferCancelledError('WebRTC closed during transfer.');
+      const settled = this.rejectDeliveryWaiter(
+        this.activeSendTransfer.transferId,
+        cancelError,
+        'cancelled'
+      );
+      if (!settled) this.transitionSenderTerminalState(this.activeSendTransfer, 'cancelled');
     }
+    this.rejectAllDeliveryWaiters('WEBRTC_CLOSED', 'WebRTC was closed before delivery confirmation.');
 
     this.cleanupReceiverDiskStream().catch((err) => {
       console.error('Error cleaning receiver disk stream during close:', err);
@@ -1373,6 +1786,8 @@ class WebRTCManager {
     this.pendingSignals = [];
     this.pendingRemoteCandidates = [];
     this.resumeWaiters.clear();
+    this.deliveryWaiters.clear();
+    this.incomingMessageChain = Promise.resolve();
     this.encryption = this.createEncryptionState();
     this.receiverState = this.createEmptyReceiverState();
   }
@@ -1384,7 +1799,9 @@ class WebRTCManager {
 
     console.log('WebRTC: recreating peer connection for automatic reconnection.');
     this.isClosing = false;
+    this.dataChannelGeneration += 1;
     this.stopNetworkDiagnostics();
+    this.rejectAllDeliveryWaiters('DATA_CHANNEL_REPLACED', 'Data connection was replaced.');
     this.pendingSignals = [];
     this.pendingRemoteCandidates = [];
 
@@ -1411,4 +1828,8 @@ class WebRTCManager {
 
     return true;
   }
+}
+
+if (typeof module === 'object' && module.exports) {
+  module.exports = WebRTCManager;
 }
