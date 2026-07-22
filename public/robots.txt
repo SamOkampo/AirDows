@@ -93,6 +93,7 @@ Crawl-delay: 1
 # Facebook
 User-agent: facebookexternalhit
 Allow: /
+
 Disallow: /admin/
 
 # X (Twitter)
