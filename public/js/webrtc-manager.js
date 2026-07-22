@@ -34,6 +34,7 @@ class WebRTCManager {
     // Configuracion ICE (STUN/TURN) - se recibe dinamicamente desde el servidor.
     this.rtcConfig = null;
     this.pendingSignals = [];
+    this.signalQueueGeneration = 0;
     this.pendingRemoteCandidates = [];
     this.isClosing = false;
     this.activeSendTransfer = null;
@@ -379,7 +380,10 @@ class WebRTCManager {
   async handleSignal(data) {
     if (!this.peerConnection) {
       console.warn('WebRTC signal received before peer connection was ready. Queueing it.');
-      this.pendingSignals.push(data);
+      this.pendingSignals.push({
+        data,
+        signalQueueGeneration: this.signalQueueGeneration
+      });
       return;
     }
 
@@ -432,8 +436,15 @@ class WebRTCManager {
     const signals = [...this.pendingSignals];
     this.pendingSignals = [];
     signals.forEach((signal) => {
-      this.handleSignal(signal);
+      if (!signal || signal.signalQueueGeneration !== this.signalQueueGeneration) return;
+      this.handleSignal(signal.data);
     });
+  }
+
+  prepareForNewPairingSignals() {
+    this.signalQueueGeneration += 1;
+    this.pendingSignals = [];
+    this.pendingRemoteCandidates = [];
   }
 
   async flushPendingRemoteCandidates(
@@ -1926,6 +1937,7 @@ class WebRTCManager {
     this.role = null;
     this.roomCode = null;
     this.activeSendTransfer = null;
+    this.signalQueueGeneration += 1;
     this.pendingSignals = [];
     this.pendingRemoteCandidates = [];
     this.resumeWaiters.clear();
@@ -1950,6 +1962,7 @@ class WebRTCManager {
     this.recoveryPrepared = false;
 
     this.createPeerConnection();
+    this.flushPendingSignals();
 
     if (this.role === 'initiator') {
       this.createDataChannel();
@@ -1964,6 +1977,7 @@ class WebRTCManager {
     this.recoveryPrepared = true;
     this.peerConnectionGeneration += 1;
     this.dataChannelGeneration += 1;
+    this.signalQueueGeneration += 1;
     this.stopNetworkDiagnostics();
     this.rejectAllDeliveryWaiters('DATA_CHANNEL_REPLACED', 'Data connection was replaced.');
     this.rejectAllResumeWaiters('DATA_CHANNEL_REPLACED', 'Data connection was replaced before receiver readiness.');

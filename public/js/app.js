@@ -779,10 +779,9 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // --- SOCKET.IO EVENT HANDLERS ---
-  socketManager.onConnect = () => {
-    const recovering = sessionRecoveryState === 'signaling-disconnected' || sessionRecoveryState === 'recovering';
+  socketManager.onConnect = ({ recovering = false, manualAction = false } = {}) => {
     console.log('Socket.io connected');
-    if (!recovering) submitPendingAutoJoin();
+    if (!recovering && !manualAction) submitPendingAutoJoin();
     
     // Set a safety timeout: if no ICE config arrives in 5 seconds, use a default fallback
     setTimeout(() => {
@@ -850,6 +849,7 @@ document.addEventListener('DOMContentLoaded', () => {
     activeSocketGeneration = connectionGeneration;
     p2pConnected = false;
     if (!recovered) {
+      webrtcManager.prepareForNewPairingSignals();
       connectionEstablishedTracked = false;
       trackAnalytics('room_joined', { role });
       updateOnboarding(2);
@@ -896,7 +896,7 @@ document.addEventListener('DOMContentLoaded', () => {
   };
 
   socketManager.onSignal = (data, connectionGeneration) => {
-    if (activeSocketGeneration && connectionGeneration !== activeSocketGeneration) return;
+    if (!activeSocketGeneration || connectionGeneration !== activeSocketGeneration) return;
     webrtcManager.handleSignal(data);
   };
 
@@ -922,6 +922,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
   socketManager.onRecoveryFailed = () => {
     failSessionRecovery();
+  };
+
+  socketManager.onManualActionPending = () => {
+    sessionRecoveryState = 'manual-reconnect';
+    p2pConnected = false;
+    switchView('setup');
   };
 
   socketManager.onError = (message) => {
@@ -1419,6 +1425,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   window.addEventListener('online', () => {
     showToast(translate('connection_recovered'));
+    socketManager.ensureConnected();
   });
 
   document.addEventListener('visibilitychange', () => {

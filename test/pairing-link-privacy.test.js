@@ -195,7 +195,10 @@ test('auto-join submits the in-memory code once and clears it immediately', () =
 
   assert.match(app, /if \(autoJoinAttempted\) return;/);
   assert.match(app, /pendingAutoJoinCode = null;[\s\S]*socketManager\.joinCode\(code\);/);
-  assert.match(app, /socketManager\.onConnect = \(\) => \{[\s\S]*submitPendingAutoJoin\(\);/);
+  assert.match(
+    app,
+    /socketManager\.onConnect = \(\{ recovering = false, manualAction = false \} = \{\}\) => \{[\s\S]*if \(!recovering && !manualAction\) submitPendingAutoJoin\(\);/
+  );
   assert.doesNotMatch(app, /autoJoinFromUrl/);
 });
 
