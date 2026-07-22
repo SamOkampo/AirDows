@@ -28,6 +28,7 @@ class WebRTCManager {
     this.onNetworkDiagnostics = null; // ({ connectionType, speed, qualityLabel, isLocal, percent })
     this.onRelayUsage = null; // ({ chunkSize, chunks })
 
+    this.sessionGeneration = 0;
     this.receiverState = this.createEmptyReceiverState();
 
     // Configuracion ICE (STUN/TURN) - se recibe dinamicamente desde el servidor.
@@ -38,8 +39,13 @@ class WebRTCManager {
     this.activeSendTransfer = null;
     this.resumeWaiters = new Map();
     this.deliveryWaiters = new Map();
+    this.completedTransfers = new Map();
+    this.completedTransferIds = new Set();
+    this.MAX_COMPLETED_TRANSFER_RECEIPTS = 128;
     this.incomingMessageChain = Promise.resolve();
     this.dataChannelGeneration = 0;
+    this.peerConnectionGeneration = 0;
+    this.recoveryPrepared = false;
     this.encryption = this.createEncryptionState();
     this.relayBudget = { plan: 'free', limitBytes: Number.POSITIVE_INFINITY, usedBytes: 0, blocked: false };
     this.pendingRelayUsageBytes = 0;
@@ -78,7 +84,8 @@ class WebRTCManager {
       writeFailed: false,
       memoryChunkCount: 0,
       finalizing: false,
-      terminalState: null
+      terminalState: null,
+      sessionGeneration: this.sessionGeneration
     };
   }
 
@@ -105,9 +112,11 @@ class WebRTCManager {
       return;
     }
 
+    this.startNewPairingSession();
     this.role = role;
     this.roomCode = roomCode;
     this.isClosing = false;
+    this.recoveryPrepared = false;
     if (!this.encryption.ready) {
       this.encryption.ready = new Promise((resolve, reject) => {
         this.encryption.resolveReady = resolve;
@@ -129,9 +138,12 @@ class WebRTCManager {
   }
 
   createPeerConnection() {
-    this.peerConnection = new RTCPeerConnection(this.rtcConfig);
+    const generation = ++this.peerConnectionGeneration;
+    const peerConnection = new RTCPeerConnection(this.rtcConfig);
+    this.peerConnection = peerConnection;
 
-    this.peerConnection.onicecandidate = (event) => {
+    peerConnection.onicecandidate = (event) => {
+      if (this.peerConnection !== peerConnection || this.peerConnectionGeneration !== generation) return;
       if (event.candidate) {
         console.log('Sending local ICE Candidate to peer');
         this.socketManager.sendSignal(this.roomCode, {
@@ -141,21 +153,24 @@ class WebRTCManager {
       }
     };
 
-    this.peerConnection.onconnectionstatechange = () => {
-      console.log(`Connection state: ${this.peerConnection.connectionState}`);
+    peerConnection.onconnectionstatechange = () => {
+      if (this.peerConnection !== peerConnection || this.peerConnectionGeneration !== generation) return;
+      console.log(`Connection state: ${peerConnection.connectionState}`);
       if (this.onConnectionStateChange) {
-        this.onConnectionStateChange(this.peerConnection.connectionState);
+        this.onConnectionStateChange(peerConnection.connectionState);
       }
     };
 
-    this.peerConnection.oniceconnectionstatechange = () => {
-      console.log(`ICE connection state: ${this.peerConnection.iceConnectionState}`);
-      if (this.peerConnection.iceConnectionState === 'failed') {
+    peerConnection.oniceconnectionstatechange = () => {
+      if (this.peerConnection !== peerConnection || this.peerConnectionGeneration !== generation) return;
+      console.log(`ICE connection state: ${peerConnection.iceConnectionState}`);
+      if (peerConnection.iceConnectionState === 'failed') {
         console.error('ICE failed: no compatible host, STUN or TURN candidate pair was found.');
       }
     };
 
-    this.peerConnection.onicecandidateerror = (event) => {
+    peerConnection.onicecandidateerror = (event) => {
+      if (this.peerConnection !== peerConnection || this.peerConnectionGeneration !== generation) return;
       console.error('ICE candidate error:', {
         url: event.url,
         errorCode: event.errorCode,
@@ -164,7 +179,8 @@ class WebRTCManager {
     };
 
     if (this.role === 'receiver') {
-      this.peerConnection.ondatachannel = (event) => {
+      peerConnection.ondatachannel = (event) => {
+        if (this.peerConnection !== peerConnection || this.peerConnectionGeneration !== generation) return;
         console.log('Received data channel created by initiator');
         this.setDataChannel(event.channel);
       };
@@ -190,6 +206,7 @@ class WebRTCManager {
     this.dataChannel.bufferedAmountLowThreshold = this.BUFFER_LOW_THRESHOLD;
 
     this.dataChannel.onopen = () => {
+      if (this.dataChannel !== channel || this.dataChannelGeneration !== channelGeneration) return;
       console.log('Data channel state is: OPEN');
       if (this.onConnectionStateChange) {
         this.onConnectionStateChange('connected');
@@ -285,18 +302,21 @@ class WebRTCManager {
     await this.deriveSessionKey();
   }
 
-  async acceptRemoteCryptoKey(publicKeyJwk) {
+  async acceptRemoteCryptoKey(publicKeyJwk, isCurrentConnection = () => true) {
     if (!this.encryption.available || !publicKeyJwk || typeof publicKeyJwk !== 'object') return;
 
-    this.encryption.remotePublicKey = await crypto.subtle.importKey(
+    const remotePublicKey = await crypto.subtle.importKey(
       'jwk',
       publicKeyJwk,
       { name: 'ECDH', namedCurve: 'P-256' },
       false,
       []
     );
+    if (!isCurrentConnection()) return;
 
+    this.encryption.remotePublicKey = remotePublicKey;
     await this.startEncryptionSession();
+    if (!isCurrentConnection()) return;
     await this.deriveSessionKey();
   }
 
@@ -363,15 +383,26 @@ class WebRTCManager {
       return;
     }
 
+    const peerConnection = this.peerConnection;
+    const generation = this.peerConnectionGeneration;
+    const isCurrentConnection = () => (
+      this.peerConnection === peerConnection && this.peerConnectionGeneration === generation
+    );
+
     try {
       if (data.type === 'crypto-key') {
-        await this.acceptRemoteCryptoKey(data.publicKey);
+        await this.acceptRemoteCryptoKey(data.publicKey, isCurrentConnection);
+        if (!isCurrentConnection()) return;
       } else if (data.type === 'offer') {
         console.log('Received SDP Offer, creating Answer...');
-        await this.peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
-        await this.flushPendingRemoteCandidates();
-        const answer = await this.peerConnection.createAnswer();
-        await this.peerConnection.setLocalDescription(answer);
+        await peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
+        if (!isCurrentConnection()) return;
+        await this.flushPendingRemoteCandidates(peerConnection, generation);
+        if (!isCurrentConnection()) return;
+        const answer = await peerConnection.createAnswer();
+        if (!isCurrentConnection()) return;
+        await peerConnection.setLocalDescription(answer);
+        if (!isCurrentConnection()) return;
 
         this.socketManager.sendSignal(this.roomCode, {
           type: 'answer',
@@ -379,15 +410,16 @@ class WebRTCManager {
         });
       } else if (data.type === 'answer') {
         console.log('Received SDP Answer...');
-        await this.peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
-        await this.flushPendingRemoteCandidates();
+        await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
+        if (!isCurrentConnection()) return;
+        await this.flushPendingRemoteCandidates(peerConnection, generation);
       } else if (data.type === 'candidate') {
         console.log('Received remote ICE candidate');
-        if (!this.peerConnection.remoteDescription) {
+        if (!peerConnection.remoteDescription) {
           this.pendingRemoteCandidates.push(data.candidate);
           return;
         }
-        await this.peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+        await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
       }
     } catch (err) {
       console.error('Error during WebRTC signaling handling:', err);
@@ -404,22 +436,31 @@ class WebRTCManager {
     });
   }
 
-  async flushPendingRemoteCandidates() {
-    if (!this.pendingRemoteCandidates.length || !this.peerConnection.remoteDescription) return;
+  async flushPendingRemoteCandidates(
+    peerConnection = this.peerConnection,
+    generation = this.peerConnectionGeneration
+  ) {
+    if (!peerConnection || !this.pendingRemoteCandidates.length || !peerConnection.remoteDescription) return;
 
     const candidates = [...this.pendingRemoteCandidates];
     this.pendingRemoteCandidates = [];
 
     for (const candidate of candidates) {
-      await this.peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+      if (this.peerConnection !== peerConnection || this.peerConnectionGeneration !== generation) return;
+      await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
     }
   }
 
   async createOffer() {
+    const peerConnection = this.peerConnection;
+    const generation = this.peerConnectionGeneration;
+    if (!peerConnection) return;
     try {
       console.log('Creating SDP Offer...');
-      const offer = await this.peerConnection.createOffer();
-      await this.peerConnection.setLocalDescription(offer);
+      const offer = await peerConnection.createOffer();
+      if (this.peerConnection !== peerConnection || this.peerConnectionGeneration !== generation) return;
+      await peerConnection.setLocalDescription(offer);
+      if (this.peerConnection !== peerConnection || this.peerConnectionGeneration !== generation) return;
 
       this.socketManager.sendSignal(this.roomCode, {
         type: 'offer',
@@ -480,12 +521,20 @@ class WebRTCManager {
         throw writeError;
       }
     } else {
+      const bufferIndex = state.receivedBuffers.length;
       state.receivedBuffers.push(chunkData);
       state.memoryChunkCount += 1;
 
       // Yield periodically so rendering and garbage collection can run between chunks.
       if (state.memoryChunkCount % 256 === 0) {
         await new Promise((resolve) => setTimeout(resolve, 0));
+        if (channelGeneration !== this.dataChannelGeneration || this.receiverState !== state) {
+          if (state.receivedBuffers[bufferIndex] === chunkData) {
+            state.receivedBuffers.splice(bufferIndex, 1);
+            state.memoryChunkCount -= 1;
+          }
+          return;
+        }
       }
     }
 
@@ -520,6 +569,19 @@ class WebRTCManager {
       }
 
       const current = this.receiverState;
+      const completed = this.completedTransfers.get(message.transferId);
+      if (!current.metadata && completed) {
+        if (completed.sessionGeneration === this.sessionGeneration &&
+            completed.name === message.name && completed.size === message.size) {
+          this.sendReceiverReady(message.transferId, {
+            offset: completed.size,
+            size: completed.size,
+            writeMode: completed.writeMode
+          });
+        }
+        return;
+      }
+      if (!current.metadata && this.completedTransferIds.has(message.transferId)) return;
       if (current.metadata) {
         const sameTransfer = current.metadata.transferId === message.transferId &&
           current.metadata.name === message.name &&
@@ -543,7 +605,12 @@ class WebRTCManager {
           this.isValidTransferSize(message.offset) && this.isValidTransferSize(message.size) &&
           message.size === transfer.totalBytes) {
         this.resumeWaiters.delete(message.transferId);
-        waiter(Math.min(message.offset, transfer.totalBytes));
+        if (typeof waiter === 'function') {
+          waiter(Math.min(message.offset, transfer.totalBytes));
+        } else {
+          clearTimeout(waiter.timeout);
+          waiter.resolve(Math.min(message.offset, transfer.totalBytes));
+        }
       }
       return;
     }
@@ -555,7 +622,12 @@ class WebRTCManager {
           this.isValidTransferSize(message.offset) && this.isValidTransferSize(message.size) &&
           message.size === transfer.totalBytes) {
         this.resumeWaiters.delete(message.transferId);
-        waiter(Math.min(message.offset, transfer.totalBytes));
+        if (typeof waiter === 'function') {
+          waiter(Math.min(message.offset, transfer.totalBytes));
+        } else {
+          clearTimeout(waiter.timeout);
+          waiter.resolve(Math.min(message.offset, transfer.totalBytes));
+        }
       }
       return;
     }
@@ -573,7 +645,21 @@ class WebRTCManager {
     if (message.type === 'transfer-finished') {
       if (!this.isValidTransferTerminalMessage(message, true)) return;
       const state = this.receiverState;
-      if (!state.metadata || state.metadata.transferId !== message.transferId || state.terminalState) return;
+      if (!state.metadata) {
+        const completed = this.completedTransfers.get(message.transferId);
+        if (completed && completed.sessionGeneration === this.sessionGeneration &&
+            completed.size === message.size &&
+            completed.lastAckGeneration !== this.dataChannelGeneration) {
+          this.sendDeliveryControl({
+            type: 'transfer-ack',
+            transferId: message.transferId,
+            size: message.size
+          });
+          completed.lastAckGeneration = this.dataChannelGeneration;
+        }
+        return;
+      }
+      if (state.metadata.transferId !== message.transferId || state.terminalState) return;
       await this.finalizeIncomingFile(message, channelGeneration);
       return;
     }
@@ -623,6 +709,7 @@ class WebRTCManager {
   async prepareIncomingFile(metadata) {
     const current = this.receiverState;
     const canResume = current.metadata &&
+      current.sessionGeneration === this.sessionGeneration &&
       current.metadata.transferId === metadata.transferId &&
       current.metadata.name === metadata.name &&
       current.metadata.size === metadata.size;
@@ -694,21 +781,38 @@ class WebRTCManager {
     });
   }
 
-  sendReceiverReady(transferId) {
+  sendReceiverReady(transferId, completed = null) {
     if (!transferId || !this.dataChannel || this.dataChannel.readyState !== 'open') return;
 
     const state = this.receiverState;
-    const offset = state.metadata && state.metadata.transferId === transferId
-      ? Math.min(state.receivedSize, state.metadata.size)
-      : 0;
+    const offset = completed
+      ? completed.offset
+      : state.metadata && state.metadata.transferId === transferId
+        ? Math.min(state.receivedSize, state.metadata.size)
+        : 0;
 
     this.dataChannel.send(JSON.stringify({
       type: 'receiver-ready',
       transferId,
       offset,
-      size: state.metadata ? state.metadata.size : 0,
-      writeMode: state.writeMode
+      size: completed ? completed.size : state.metadata ? state.metadata.size : 0,
+      writeMode: completed ? completed.writeMode : state.writeMode
     }));
+  }
+
+  rememberCompletedTransfer(metadata, writeMode, channelGeneration) {
+    this.completedTransferIds.add(metadata.transferId);
+    this.completedTransfers.delete(metadata.transferId);
+    this.completedTransfers.set(metadata.transferId, {
+      name: metadata.name,
+      size: metadata.size,
+      writeMode,
+      sessionGeneration: this.sessionGeneration,
+      lastAckGeneration: channelGeneration
+    });
+    while (this.completedTransfers.size > this.MAX_COMPLETED_TRANSFER_RECEIPTS) {
+      this.completedTransfers.delete(this.completedTransfers.keys().next().value);
+    }
   }
 
   sendDeliveryControl(message) {
@@ -793,6 +897,7 @@ class WebRTCManager {
     }
 
     if (channelGeneration !== this.dataChannelGeneration || this.receiverState !== state) return;
+    this.rememberCompletedTransfer(metadata, completionOptions.writeMode, channelGeneration);
     state.terminalState = 'completed';
     this.stopNetworkDiagnostics();
     this.sendDeliveryControl({
@@ -1066,6 +1171,7 @@ class WebRTCManager {
     if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
       throw new Error('Data connection is not ready or open yet!');
     }
+    const channelGeneration = this.dataChannelGeneration;
 
     const performanceProfile = await this.selectPerformanceProfile();
     const CHUNK_SIZE = performanceProfile.chunkSize;
@@ -1093,13 +1199,15 @@ class WebRTCManager {
       totalBytes: file.size,
       connectionType: performanceProfile.connectionType,
       relayChunks: 0,
-      relayChunkSize: CHUNK_SIZE
+      relayChunkSize: CHUNK_SIZE,
+      channelGeneration
     };
     if (!this.isValidTransferId(transfer.transferId) || !this.isValidTransferSize(transfer.totalBytes)) {
       const error = new Error('Invalid transfer metadata.');
       error.code = 'INVALID_TRANSFER_METADATA';
       throw error;
     }
+    this.throwIfTransferCancelled(transfer);
     this.activeSendTransfer = transfer;
 
     if (this.onFileTransferStart) {
@@ -1124,6 +1232,7 @@ class WebRTCManager {
     };
     let resumeOffset;
     try {
+      this.throwIfTransferCancelled(transfer);
       await this.sendWithBackpressure(
         JSON.stringify(metadata),
         BUFFER_THRESHOLD,
@@ -1136,6 +1245,8 @@ class WebRTCManager {
         throw error;
       }
     } catch (err) {
+      const resumeWaiter = this.resumeWaiters.get(transfer.transferId);
+      if (resumeWaiter) clearTimeout(resumeWaiter.timeout);
       this.resumeWaiters.delete(transfer.transferId);
       if (this.activeSendTransfer === transfer) {
         this.activeSendTransfer = null;
@@ -1173,6 +1284,7 @@ class WebRTCManager {
           }
 
           const outgoingChunk = sessionKey ? await this.encryptChunk(chunk) : chunk;
+          this.throwIfTransferCancelled(transfer);
           if (performanceProfile.connectionType === 'relay') {
             if (!this.reserveRelayBudget(outgoingChunk.byteLength)) {
               transfer.proRequired = true;
@@ -1196,6 +1308,7 @@ class WebRTCManager {
             BUFFER_THRESHOLD,
             transfer.abortController.signal
           );
+          this.throwIfTransferCancelled(transfer);
           chunkOffset += sliceSize;
           offset += sliceSize;
           transfer.bytesTransferred = offset;
@@ -1224,7 +1337,6 @@ class WebRTCManager {
       }
 
       await deliveryPromise;
-      this.throwIfTransferCancelled(transfer);
       this.stopNetworkDiagnostics();
 
       this.invokeSenderTerminalCallback(transfer, 'completed', () => {
@@ -1282,17 +1394,38 @@ class WebRTCManager {
   }
 
   waitForReceiverReady(transfer) {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.resumeWaiters.delete(transfer.transferId);
         resolve(null);
       }, this.RECEIVER_READY_TIMEOUT);
 
-      this.resumeWaiters.set(transfer.transferId, (offset) => {
-        clearTimeout(timeout);
-        resolve(offset);
-      });
+      this.resumeWaiters.set(transfer.transferId, { resolve, reject, timeout });
     });
+  }
+
+  rejectAllResumeWaiters(code, message) {
+    for (const [transferId, waiter] of this.resumeWaiters.entries()) {
+      this.resumeWaiters.delete(transferId);
+      if (typeof waiter === 'function') {
+        waiter(null);
+      } else {
+        clearTimeout(waiter.timeout);
+        waiter.reject(this.createDeliveryError(code, message));
+      }
+    }
+  }
+
+  startNewPairingSession() {
+    this.sessionGeneration += 1;
+    this.completedTransfers.clear();
+    this.completedTransferIds.clear();
+    this.rejectAllDeliveryWaiters('SESSION_REPLACED', 'The paired session was replaced.');
+    this.rejectAllResumeWaiters('SESSION_REPLACED', 'The paired session was replaced.');
+    this.cleanupReceiverDiskStream().catch((err) => {
+      console.error('Error cleaning receiver stream for a new pairing session:', err.message);
+    });
+    this.receiverState = this.createEmptyReceiverState();
   }
 
   isMobileDevice() {
@@ -1443,6 +1576,12 @@ class WebRTCManager {
       const err = new Error('Transfer cancelled.');
       err.name = 'AbortError';
       throw err;
+    }
+    if (transfer.channelGeneration !== this.dataChannelGeneration) {
+      throw this.createDeliveryError(
+        'DATA_CHANNEL_REPLACED',
+        'Data connection was replaced during transfer.'
+      );
     }
   }
 
@@ -1746,6 +1885,9 @@ class WebRTCManager {
   close() {
     console.log('Cleaning up WebRTC connections...');
     this.isClosing = true;
+    this.recoveryPrepared = false;
+    this.sessionGeneration += 1;
+    this.peerConnectionGeneration += 1;
     this.dataChannelGeneration += 1;
     this.stopNetworkDiagnostics();
 
@@ -1761,6 +1903,7 @@ class WebRTCManager {
       if (!settled) this.transitionSenderTerminalState(this.activeSendTransfer, 'cancelled');
     }
     this.rejectAllDeliveryWaiters('WEBRTC_CLOSED', 'WebRTC was closed before delivery confirmation.');
+    this.rejectAllResumeWaiters('WEBRTC_CLOSED', 'WebRTC was closed before receiver readiness.');
 
     this.cleanupReceiverDiskStream().catch((err) => {
       console.error('Error cleaning receiver disk stream during close:', err);
@@ -1787,23 +1930,50 @@ class WebRTCManager {
     this.pendingRemoteCandidates = [];
     this.resumeWaiters.clear();
     this.deliveryWaiters.clear();
+    this.completedTransfers.clear();
+    this.completedTransferIds.clear();
     this.incomingMessageChain = Promise.resolve();
     this.encryption = this.createEncryptionState();
     this.receiverState = this.createEmptyReceiverState();
   }
 
-  reconnect() {
-    if (!this.role || !this.roomCode || !this.rtcConfig) {
+  reconnect(role = this.role, roomCode = this.roomCode) {
+    if (!role || !roomCode || !this.rtcConfig) {
       return false;
     }
 
+    this.role = role;
+    this.roomCode = roomCode;
     console.log('WebRTC: recreating peer connection for automatic reconnection.');
+    this.prepareForRecovery();
     this.isClosing = false;
+    this.recoveryPrepared = false;
+
+    this.createPeerConnection();
+
+    if (this.role === 'initiator') {
+      this.createDataChannel();
+      this.createOffer();
+    }
+
+    return true;
+  }
+
+  prepareForRecovery() {
+    if (this.recoveryPrepared) return true;
+    this.recoveryPrepared = true;
+    this.peerConnectionGeneration += 1;
     this.dataChannelGeneration += 1;
     this.stopNetworkDiagnostics();
     this.rejectAllDeliveryWaiters('DATA_CHANNEL_REPLACED', 'Data connection was replaced.');
+    this.rejectAllResumeWaiters('DATA_CHANNEL_REPLACED', 'Data connection was replaced before receiver readiness.');
     this.pendingSignals = [];
     this.pendingRemoteCandidates = [];
+    this.incomingMessageChain = Promise.resolve();
+
+    if (this.activeSendTransfer && this.activeSendTransfer.reader) {
+      this.activeSendTransfer.reader.cancel().catch(() => {});
+    }
 
     if (this.dataChannel) {
       try {
@@ -1817,13 +1987,6 @@ class WebRTCManager {
         this.peerConnection.close();
       } catch (err) {}
       this.peerConnection = null;
-    }
-
-    this.createPeerConnection();
-
-    if (this.role === 'initiator') {
-      this.createDataChannel();
-      this.createOffer();
     }
 
     return true;

@@ -53,6 +53,7 @@ const io = new Server(server, {
 
 const PORT = process.env.PORT || 3000;
 const ROOM_EXPIRATION_MS = 180000;  // 3 minutes: strict single-use expiration
+const SESSION_RECOVERY_GRACE_MS = 60 * 1000;
 const ICE_CONFIG_CACHE_MS = 10 * 60 * 1000;
 const NETWORK_HEALTH_WINDOW_MS = 60 * 1000;
 const MAX_NETWORK_HEALTH_EVENTS = 12;
@@ -674,25 +675,63 @@ io.on('connection', (socket) => {
     }
 
     const { code, room } = result;
-    const occupants = room.occupants;
     socket.join(code);
     
     console.info(`[Pairing] New pairing session established`);
 
-    const occupantsArray = Array.from(occupants);
-    const initiatorId = occupantsArray[0];
-    const joinerId = occupantsArray[1];
-
-    io.to(initiatorId).emit('paired', { role: 'initiator', peerId: joinerId, code });
-    io.to(joinerId).emit('paired', { role: 'receiver', peerId: initiatorId, code });
+    emitPairedSession(room, false);
   });
 
-  // 3. Forward Signaling Messages
+  // 3. Recover a paired session using the participant's short-lived in-memory credential.
+  socket.on('recover-session', (payload = {}) => {
+    const limit = joinLimiter.attempt(socket.data.clientIp);
+    if (!limit.allowed) {
+      socket.emit('recovery-failed', { message: 'CONNECT_FAILED' });
+      console.warn(`[RateLimit] Recovery attempts blocked for ${socket.data.maskedIp}`);
+      return;
+    }
+
+    const recoveryToken = payload && typeof payload === 'object' ? payload.recoveryToken : '';
+    const result = pairingSecurity.recoverSession(recoveryToken, socket.id, (recoveringCode) => {
+      if (pairingSecurity.socketRooms.get(socket.id) !== recoveringCode) leaveAllRooms(socket);
+    });
+    if (!result.ok) {
+      socket.emit('recovery-failed', { message: 'CONNECT_FAILED' });
+      return;
+    }
+
+    socket.join(result.code);
+    if (result.alreadyConnected) return;
+    if (!result.ready) {
+      socket.emit('recovery-waiting', { recoveryToken: result.recoveryToken });
+      return;
+    }
+
+    console.info('[Recovery] Paired session restored');
+    emitPairedSession(result.room, true);
+  });
+
+  // A client that gives up recovery explicitly releases the otherwise longer server grace period.
+  socket.on('abandon-recovery', (payload = {}) => {
+    const recoveryToken = payload && typeof payload === 'object' ? payload.recoveryToken : '';
+    const result = pairingSecurity.abandonRecovery(recoveryToken, socket.id);
+    if (!result.ok) return;
+
+    io.to(result.code).emit('recovery-failed', { message: 'CONNECT_FAILED' });
+    io.in(result.code).socketsLeave(result.code);
+    console.info('[Recovery] Paired session recovery abandoned');
+  });
+
+  // 4. Forward Signaling Messages
   socket.on('signal', (payload = {}) => {
     const room = String(payload.room || '').trim();
     const data = payload.data;
 
-    if (!room || !activeRooms.has(room) || !activeRooms.get(room).occupants.has(socket.id)) {
+    const activeRoom = activeRooms.get(room);
+    const participant = pairingSecurity.getParticipantBySocket(activeRoom, socket.id);
+    if (!room || !activeRoom || activeRoom.state !== 'paired' ||
+        !activeRoom.occupants.has(socket.id) ||
+        pairingSecurity.socketRooms.get(socket.id) !== room || !participant) {
       socket.emit('error-message', { message: 'Invalid signaling payload.' });
       return;
     }
@@ -705,17 +744,61 @@ io.on('connection', (socket) => {
     socket.to(room).emit('signal', { data, senderId: socket.id });
   });
 
-  // 4. Manually leave/unpair
+  // 5. Manually leave/unpair
   socket.on('leave-room', () => {
     leaveAllRooms(socket);
   });
 
-  // 5. Handle Disconnect
+  // 6. Handle Disconnect
   socket.on('disconnect', () => {
-    console.info(`[Disconnect] Session terminated`);
-    leaveAllRooms(socket);
+    console.info('[Disconnect] Signaling session interrupted');
+    handleSocketDisconnect(socket);
   });
 });
+
+function emitPairedSession(room, recovered) {
+  if (!room || !room.participants) return;
+  const participants = Array.from(room.participants.values());
+  if (participants.length !== 2 || participants.some((participant) => !participant.socketId)) return;
+
+  for (const participant of participants) {
+    const peer = participants.find((candidate) => candidate !== participant);
+    io.to(participant.socketId).emit('paired', {
+      role: participant.role,
+      peerId: peer.socketId,
+      code: room.code,
+      recoveryToken: participant.recoveryToken,
+      recovered
+    });
+  }
+}
+
+function scheduleRecoveryExpiry(code, room, recoveryGeneration) {
+  if (!room || room.recoveryTimeout) return;
+  room.recoveryTimeout = setTimeout(() => {
+    const expiredRoom = pairingSecurity.expireRecoveringRoom(code, room, recoveryGeneration);
+    if (!expiredRoom) return;
+
+    io.to(code).emit('recovery-failed', { message: 'CONNECT_FAILED' });
+    io.in(code).socketsLeave(code);
+    console.info('[Recovery] Paired session recovery expired');
+  }, SESSION_RECOVERY_GRACE_MS);
+  if (typeof room.recoveryTimeout.unref === 'function') room.recoveryTimeout.unref();
+}
+
+function handleSocketDisconnect(socket) {
+  const result = pairingSecurity.markSocketDisconnected(socket.id);
+  if (!result) return;
+
+  if (!result.recoverable || !result.room) {
+    console.info('[Cleanup] Unpaired session destroyed');
+    return;
+  }
+
+  socket.to(result.code).emit('peer-disconnected', { recoverable: true });
+  scheduleRecoveryExpiry(result.code, result.room, result.recoveryGeneration);
+  console.info('[Recovery] Waiting for paired participant to reconnect');
+}
 
 function leaveAllRooms(socket) {
   const endedRooms = pairingSecurity.endRoomsForSocket(socket.id);
