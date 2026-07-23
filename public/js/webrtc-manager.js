@@ -12,6 +12,12 @@ class WebRTCManager {
     this.DELIVERY_ACK_RETRY_INTERVAL = Number.isSafeInteger(options.deliveryAckRetryInterval)
       ? Math.max(1, options.deliveryAckRetryInterval)
       : 2000;
+    this.DELIVERY_ACK_COOLDOWN = Number.isSafeInteger(options.deliveryAckCooldown)
+      ? Math.max(1, options.deliveryAckCooldown)
+      : 500;
+    this.deliveryAckNow = typeof options.deliveryAckNow === 'function'
+      ? options.deliveryAckNow
+      : Date.now;
     this.MAX_TRANSFER_ID_LENGTH = 128;
     this.socketManager = socketManager;
     this.peerConnection = null;
@@ -662,13 +668,13 @@ class WebRTCManager {
       if (!state.metadata) {
         const completed = this.completedTransfers.get(message.transferId);
         if (completed && completed.sessionGeneration === this.sessionGeneration &&
-            completed.size === message.size) {
+            completed.size === message.size &&
+            this.shouldSendCompletedAck(completed)) {
           this.sendDeliveryControl({
             type: 'transfer-ack',
             transferId: message.transferId,
             size: message.size
           });
-          completed.lastAckGeneration = this.dataChannelGeneration;
         }
         return;
       }
@@ -821,11 +827,22 @@ class WebRTCManager {
       size: metadata.size,
       writeMode,
       sessionGeneration: this.sessionGeneration,
-      lastAckGeneration: channelGeneration
+      lastAckGeneration: channelGeneration,
+      lastAckAt: this.deliveryAckNow()
     });
     while (this.completedTransfers.size > this.MAX_COMPLETED_TRANSFER_RECEIPTS) {
       this.completedTransfers.delete(this.completedTransfers.keys().next().value);
     }
+  }
+
+  shouldSendCompletedAck(completed) {
+    if (!completed || completed.sessionGeneration !== this.sessionGeneration) return false;
+    const now = this.deliveryAckNow();
+    const sameChannel = completed.lastAckGeneration === this.dataChannelGeneration;
+    if (sameChannel && now - completed.lastAckAt < this.DELIVERY_ACK_COOLDOWN) return false;
+    completed.lastAckGeneration = this.dataChannelGeneration;
+    completed.lastAckAt = now;
+    return true;
   }
 
   sendDeliveryControl(message) {
@@ -1103,7 +1120,8 @@ class WebRTCManager {
           : null,
         settled: false,
         timeout: null,
-        retryTimeout: null
+        retryTimeout: null,
+        retryAbortController: new AbortController()
       };
 
       waiter.timeout = setTimeout(() => {
@@ -1124,10 +1142,12 @@ class WebRTCManager {
     const waiter = this.deliveryWaiters.get(transferId);
     if (!waiter || waiter.settled || typeof retry !== 'function') return false;
 
-    const scheduleRetry = () => {
+    const scheduleRetry = async () => {
       const current = this.deliveryWaiters.get(transferId);
       if (current !== waiter || current.settled) return;
-      retry();
+      try {
+        await retry(waiter.retryAbortController.signal);
+      } catch (err) {}
       if (this.deliveryWaiters.get(transferId) !== waiter || waiter.settled) return;
       waiter.retryTimeout = setTimeout(scheduleRetry, this.DELIVERY_ACK_RETRY_INTERVAL);
       if (typeof waiter.retryTimeout.unref === 'function') waiter.retryTimeout.unref();
@@ -1176,6 +1196,7 @@ class WebRTCManager {
     waiter.settled = true;
     clearTimeout(waiter.timeout);
     if (waiter.retryTimeout) clearTimeout(waiter.retryTimeout);
+    waiter.retryAbortController.abort();
     this.deliveryWaiters.delete(transferId);
 
     if (outcome === 'resolve') waiter.resolve();
@@ -1372,7 +1393,11 @@ class WebRTCManager {
 
       this.startDeliveryRetry(
         transfer.transferId,
-        () => this.sendDeliveryControl(finishedMessage)
+        (retrySignal) => this.sendWithBackpressure(
+          JSON.stringify(finishedMessage),
+          BUFFER_THRESHOLD,
+          retrySignal
+        )
       );
       await deliveryPromise;
       this.stopNetworkDiagnostics();

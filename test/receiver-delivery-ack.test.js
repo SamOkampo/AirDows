@@ -67,7 +67,9 @@ class FakeDataChannel {
 function createManager(options = {}) {
   const manager = new WebRTCManager({}, {
     deliveryAckTimeout: options.deliveryAckTimeout || 100,
-    deliveryAckRetryInterval: options.deliveryAckRetryInterval || 20
+    deliveryAckRetryInterval: options.deliveryAckRetryInterval || 20,
+    deliveryAckCooldown: options.deliveryAckCooldown || 2,
+    deliveryAckNow: options.deliveryAckNow
   });
   manager.selectPerformanceProfile = async () => ({
     chunkSize: 4,
@@ -128,7 +130,7 @@ function startSender(options = {}) {
 }
 
 function prepareReceiver(options = {}) {
-  const manager = createManager();
+  const manager = createManager(options.managerOptions || {});
   const channel = new FakeDataChannel();
   manager.setDataChannel(channel);
   const size = options.size ?? 3;
@@ -197,6 +199,33 @@ test('sender retries transfer-finished when the first delivery ACK is lost', asy
   manager.handleTransferAck({ type: 'transfer-ack', transferId, size: file.size });
   await promise;
   assert.equal(controlMessages(channel, 'transfer-finished').length >= 2, true);
+  assert.equal(manager.deliveryWaiters.size, 0);
+});
+
+test('transfer-finished retry waits for DataChannel backpressure', async () => {
+  const { manager, channel, file, transferId, promise } = startSender({
+    deliveryAckTimeout: 200,
+    deliveryAckRetryInterval: 5
+  });
+  await waitForControl(channel, 'transfer-finished');
+  channel.bufferedAmount = 1024;
+
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    if (channel.listeners.get('bufferedamountlow')?.size) break;
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+
+  assert.equal(channel.listeners.get('bufferedamountlow')?.size > 0, true);
+  assert.equal(controlMessages(channel, 'transfer-finished').length, 1);
+  channel.bufferedAmount = 0;
+  channel.emit('bufferedamountlow');
+
+  while (controlMessages(channel, 'transfer-finished').length < 2) {
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+
+  manager.handleTransferAck({ type: 'transfer-ack', transferId, size: file.size });
+  await promise;
   assert.equal(manager.deliveryWaiters.size, 0);
 });
 
@@ -694,8 +723,58 @@ test('duplicate transfer-finished messages finalize only once', async () => {
   await sendFinished(manager, transferId, size);
   await sendFinished(manager, transferId, size);
   assert.equal(completions, 1);
-  assert.equal(controlMessages(channel, 'transfer-ack').length, 2);
+  assert.equal(controlMessages(channel, 'transfer-ack').length, 1);
   assert.equal(state.terminalState, 'completed');
+});
+
+test('completed transfer re-ACK is limited by a per-transfer cooldown', async () => {
+  let now = 1000;
+  const { manager, channel, transferId, size } = prepareReceiver({
+    managerOptions: {
+      deliveryAckCooldown: 100,
+      deliveryAckNow: () => now
+    }
+  });
+  let completions = 0;
+  manager.onFileTransferComplete = () => { completions += 1; };
+  await sendFinished(manager, transferId, size);
+
+  for (let index = 0; index < 20; index += 1) {
+    await sendFinished(manager, transferId, size);
+  }
+  assert.equal(controlMessages(channel, 'transfer-ack').length, 1);
+
+  now += 100;
+  await sendFinished(manager, transferId, size);
+  assert.equal(controlMessages(channel, 'transfer-ack').length, 2);
+  assert.equal(completions, 1);
+});
+
+test('malicious duplicate terminals cannot amplify ACKs or repeat completion', async () => {
+  let now = 2000;
+  const { manager, channel, transferId, size } = prepareReceiver({
+    managerOptions: {
+      deliveryAckCooldown: 100,
+      deliveryAckNow: () => now
+    }
+  });
+  let completions = 0;
+  manager.onFileTransferComplete = () => { completions += 1; };
+  await sendFinished(manager, transferId, size);
+
+  for (let index = 0; index < 100; index += 1) {
+    await sendFinished(manager, transferId, size);
+    await sendFinished(manager, transferId, size + 1);
+    await sendFinished(manager, `unknown-${index}`, size);
+  }
+
+  assert.equal(controlMessages(channel, 'transfer-ack').length, 1);
+  assert.equal(completions, 1);
+  assert.equal(manager.completedTransfers.size, 1);
+
+  now += 100;
+  await sendFinished(manager, transferId, size);
+  assert.equal(controlMessages(channel, 'transfer-ack').length, 2);
 });
 
 test('ACK send failure after successful disk close preserves receiver completion truth', async () => {
@@ -860,14 +939,14 @@ test('complete resume offset sends no chunks and still waits for one ACK', async
   await promise;
 });
 
-test('receiver with a complete resume offset re-ACKs duplicate transfer-finished messages', async () => {
+test('receiver with a complete resume offset throttles immediate duplicate terminal messages', async () => {
   const { manager, channel, state, transferId, size } = prepareReceiver();
   await manager.prepareIncomingFile({ ...state.metadata });
   manager.sendReceiverReady(transferId);
   assert.equal(controlMessages(channel, 'receiver-ready')[0].offset, size);
   await sendFinished(manager, transferId, size);
   await sendFinished(manager, transferId, size);
-  assert.equal(controlMessages(channel, 'transfer-ack').length, 2);
+  assert.equal(controlMessages(channel, 'transfer-ack').length, 1);
 });
 
 test('resume offset above total size is safely bounded and another transferId is ignored', async () => {
