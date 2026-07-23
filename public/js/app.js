@@ -269,6 +269,8 @@ document.addEventListener('DOMContentLoaded', () => {
       ? 'onboarding_complete_title'
       : onboardingCopy[onboardingStep].title;
 
+    onboardingProgress.setAttribute('data-i18n', 'onboarding_progress');
+    onboardingProgress.setAttribute('data-i18n-step', String(onboardingStep));
     onboardingProgress.textContent = translate('onboarding_progress').replace('{step}', onboardingStep);
     onboardingCurrentTitle.setAttribute('data-i18n', titleKey);
     onboardingCurrentTitle.textContent = translate(titleKey);

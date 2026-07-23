@@ -82,7 +82,7 @@
         <div class="onboarding-guide-header">
           <div class="onboarding-guide-summary" aria-live="polite">
             <span class="onboarding-label" data-i18n="onboarding_title">Send a file in 4 simple steps</span>
-            <span id="onboarding-progress" class="onboarding-progress">Step 1 of 4</span>
+            <span id="onboarding-progress" class="onboarding-progress" data-i18n="onboarding_progress" data-i18n-step="1">Step 1 of 4</span>
             <strong id="onboarding-current-title" data-i18n="onboarding_step_1_title">Create a connection or use a code</strong>
           </div>
           <button id="btn-toggle-onboarding" class="onboarding-toggle" type="button" aria-expanded="true" aria-label="Hide guide" title="Hide guide">×</button>
@@ -581,7 +581,10 @@
       document.documentElement.lang = currentLang;
       document.querySelectorAll('[data-i18n]').forEach(el => {
         const key = el.getAttribute('data-i18n');
-        if (lang[key]) el.textContent = lang[key];
+        if (lang[key]) {
+          const step = el.getAttribute('data-i18n-step');
+          el.textContent = step ? lang[key].replace('{step}', step) : lang[key];
+        }
       });
       document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
         const key = el.getAttribute('data-i18n-placeholder');

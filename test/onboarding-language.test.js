@@ -82,15 +82,22 @@ function loadOnboardingHarness() {
   return {
     render: context.renderOnboarding,
     title,
+    progress,
     setLanguage(nextLanguage) {
       language = nextLanguage;
-      const key = title.getAttribute('data-i18n');
-      title.textContent = translationsContext.translations[language][key];
+      for (const element of [title, progress]) {
+        const key = element.getAttribute('data-i18n');
+        const step = element.getAttribute('data-i18n-step');
+        const translated = translationsContext.translations[language][key];
+        element.textContent = step
+          ? translated.replace('{step}', step)
+          : translated;
+      }
     }
   };
 }
 
-test('active onboarding titles for all four steps change language without reloading', () => {
+test('active onboarding titles and progress change language without reloading', () => {
   const harness = loadOnboardingHarness();
   const expected = {
     1: ['Crea una conexión o usa un código', 'Create a connection or use a code'],
@@ -110,8 +117,11 @@ test('active onboarding titles for all four steps change language without reload
 
     harness.setLanguage('en');
     assert.equal(harness.title.textContent, expected[step][1]);
+    assert.equal(harness.progress.textContent, `Step ${step} of 4`);
+    assert.equal(harness.progress.getAttribute('data-i18n-step'), String(step));
 
     harness.setLanguage('es');
     assert.equal(harness.title.textContent, expected[step][0]);
+    assert.equal(harness.progress.textContent, `Paso ${step} de 4`);
   }
 });
