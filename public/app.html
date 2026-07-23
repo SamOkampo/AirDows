@@ -81,18 +81,19 @@
       <section id="onboarding-guide" class="onboarding-guide" aria-label="Transfer guide" data-i18n-aria="onboarding_aria">
         <div class="onboarding-guide-header">
           <div class="onboarding-guide-summary" aria-live="polite">
+            <span class="onboarding-label" data-i18n="onboarding_title">Send a file in 4 simple steps</span>
             <span id="onboarding-progress" class="onboarding-progress">Step 1 of 4</span>
-            <strong id="onboarding-current-title">Open AirDows on both devices</strong>
+            <strong id="onboarding-current-title">Create a connection or use a code</strong>
           </div>
           <button id="btn-toggle-onboarding" class="onboarding-toggle" type="button" aria-expanded="true" aria-label="Hide guide" title="Hide guide">×</button>
         </div>
         <ol class="onboarding-steps">
-          <li class="is-current" data-onboarding-step="1"><span>01</span><div><strong data-i18n="onboarding_open">Open</strong><small data-i18n="onboarding_open_desc">AirDows on both devices</small></div></li>
-          <li data-onboarding-step="2"><span>02</span><div><strong data-i18n="onboarding_connect">Connect</strong><small data-i18n="onboarding_connect_desc">Scan the QR or enter the temporary code</small></div></li>
-          <li data-onboarding-step="3"><span>03</span><div><strong data-i18n="onboarding_choose">Choose</strong><small data-i18n="onboarding_choose_desc">Select or drop your files</small></div></li>
-          <li data-onboarding-step="4"><span>04</span><div><strong data-i18n="onboarding_receive">Receive</strong><small data-i18n="onboarding_receive_desc">Keep both devices active</small></div></li>
+          <li class="is-current" data-onboarding-step="1"><span>01</span><div><strong data-i18n="onboarding_start">Start</strong><small data-i18n="onboarding_start_desc">Create a connection or use a code</small></div></li>
+          <li data-onboarding-step="2"><span>02</span><div><strong data-i18n="onboarding_wait">Wait</strong><small data-i18n="onboarding_wait_desc">Open AirDows on the other device</small></div></li>
+          <li data-onboarding-step="3"><span>03</span><div><strong data-i18n="onboarding_choose">Select</strong><small data-i18n="onboarding_choose_desc">Choose or drop your files</small></div></li>
+          <li data-onboarding-step="4"><span>04</span><div><strong data-i18n="onboarding_send">Send</strong><small data-i18n="onboarding_send_desc">Keep both devices active</small></div></li>
         </ol>
-        <p id="onboarding-hint" class="onboarding-hint">Open this same page on the device you want to connect</p>
+        <p id="onboarding-hint" class="onboarding-hint">Choose how you want to connect your devices</p>
       </section>
       
       <!-- 1. SETUP / PAIRING SCREEN -->
@@ -101,19 +102,26 @@
           <div class="shared-files-copy"><strong id="shared-files-title">1 file ready</strong><span id="shared-files-detail">Connect another device to send it.</span></div>
           <span class="shared-files-status" data-i18n="shared_files_status">Waiting for connection</span>
         </div>
+        <p class="privacy-assurance">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+            <path d="M12 3 5 6v5c0 4.6 2.8 8.1 7 10 4.2-1.9 7-5.4 7-10V6l-7-3Z" stroke-linejoin="round"/>
+            <path d="m9.5 12 1.7 1.7 3.6-3.9" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span data-i18n="privacy_assurance">Your files travel directly between your devices. AirDows does not store them.</span>
+        </p>
         <div class="pairing-grid">
           
           <!-- Column A: Receive (Generate Code) -->
-          <div class="pairing-col">
+          <div class="pairing-col pairing-col-primary">
             <div class="col-header">
-              <span class="badge badge-receive" data-i18n="receive_badge">Receive</span>
-              <h2 data-i18n="receive_title">Set up as Receiver</h2>
-              <p data-i18n="receive_desc">Generate a secure 4-digit code or scan the QR code to connect another device.</p>
+              <span class="badge badge-receive" data-i18n="receive_badge">Recommended</span>
+              <h2 data-i18n="receive_title">Create a connection</h2>
+              <p data-i18n="receive_desc">Get a temporary code to open this connection on your other device.</p>
             </div>
             
             <div id="code-generator-box" class="code-box">
-              <button id="btn-generate" class="btn btn-primary">
-                <span data-i18n="btn_generate">Generate Pairing Code</span>
+              <button id="btn-generate" class="btn btn-primary" type="button">
+                <span data-i18n="btn_generate">Create connection</span>
               </button>
               
               <div id="code-display-wrapper" class="hidden">
@@ -142,17 +150,18 @@
           <!-- Column B: Send (Join Code) -->
           <div class="pairing-col">
             <div class="col-header">
-              <span class="badge badge-send" data-i18n="send_badge">Send</span>
-              <h2 data-i18n="send_title">Connect to Receiver</h2>
-              <p data-i18n="send_desc">Enter the 4-digit pairing code displayed on the receiving device to establish a direct connection.</p>
+              <span class="badge badge-send" data-i18n="send_badge">Already have a code?</span>
+              <h2 data-i18n="send_title">Enter your code</h2>
+              <p data-i18n="send_desc">Use the four digits shown on the other device to join its connection.</p>
             </div>
 
             <div class="code-input-box">
               <div class="input-wrapper">
-                <input type="text" id="join-code-input" maxlength="4" placeholder="Enter 4-Digit Code" data-i18n-placeholder="join_placeholder" autocomplete="off" oninput="this.value = this.value.replace(/[^0-9]/g, '')">
+                <label class="sr-only" for="join-code-input" data-i18n="join_label">4-digit connection code</label>
+                <input type="text" id="join-code-input" maxlength="4" inputmode="numeric" pattern="[0-9]{4}" placeholder="Enter 4-Digit Code" data-i18n-placeholder="join_placeholder" autocomplete="off" oninput="this.value = this.value.replace(/[^0-9]/g, '')">
               </div>
-              <button id="btn-join" class="btn btn-secondary">
-                <span data-i18n="btn_join">Connect Device</span>
+              <button id="btn-join" class="btn btn-secondary" type="button">
+                <span data-i18n="btn_join">I have a code</span>
               </button>
             </div>
           </div>
@@ -163,9 +172,9 @@
       <!-- 2. CONNECTED / TRANSFER SCREEN -->
       <div id="transfer-view" class="view hidden">
         <div class="transfer-header">
-          <div class="connection-status-pill">
+          <div class="connection-status-pill" role="status" aria-live="polite">
             <span class="status-dot pulsing"></span>
-            <span id="connection-status-text" data-i18n="conn_status">Connected to Remote Peer</span>
+            <span id="connection-status-text" data-i18n="conn_status">Connected · Now select your files</span>
           </div>
           <div id="air-pet" class="air-pet is-connecting" aria-label="AirDows assistant" role="img">
             <span class="air-pet-antenna"></span>
@@ -325,34 +334,37 @@
       en: {
         title: "AirDows - P2P File Transfer",
         subtitle: "Send files between Android, iPhone, Windows and Mac",
-        receive_badge: "Receive",
-        receive_title: "Set up as Receiver",
-        receive_desc: "Generate a secure 4-digit code or scan the QR code to connect another device.",
-        btn_generate: "Generate Pairing Code",
+        receive_badge: "Recommended",
+        receive_title: "Create a connection",
+        receive_desc: "Get a temporary code to open this connection on your other device.",
+        btn_generate: "Create connection",
         qr_hint: "Scan with mobile to pair instantly",
         divider_or: "OR",
-        send_badge: "Send",
-        send_title: "Connect to Receiver",
-        send_desc: "Enter the 4-digit pairing code displayed on the receiving device to establish a direct connection.",
+        send_badge: "Already have a code?",
+        send_title: "Enter your code",
+        send_desc: "Use the four digits shown on the other device to join its connection.",
+        join_label: "4-digit connection code",
         join_placeholder: "Enter 4-Digit Code",
-        btn_join: "Connect Device",
+        btn_join: "I have a code",
+        privacy_assurance: "Your files travel directly between your devices. AirDows does not store them.",
         onboarding_aria: "AirDows transfer guide",
+        onboarding_title: "Send a file in 4 simple steps",
         onboarding_progress: "Step {step} of 4",
-        onboarding_open: "Open",
-        onboarding_open_desc: "AirDows on both devices",
-        onboarding_connect: "Connect",
-        onboarding_connect_desc: "Scan the QR or enter the temporary code",
-        onboarding_choose: "Choose",
-        onboarding_choose_desc: "Select or drop your files",
-        onboarding_receive: "Receive",
-        onboarding_receive_desc: "Keep both devices active",
-        onboarding_step_1_title: "Open AirDows on both devices",
-        onboarding_step_1_hint: "Open this same page on the device you want to connect",
-        onboarding_step_2_title: "Connect the devices",
-        onboarding_step_2_hint: "Scan the QR code or enter the four-digit temporary code",
-        onboarding_step_3_title: "Choose what you want to transfer",
-        onboarding_step_3_hint: "The connection is ready. Select files or drag them into AirDows",
-        onboarding_step_4_title: "Keep both devices active",
+        onboarding_start: "Start",
+        onboarding_start_desc: "Create a connection or use a code",
+        onboarding_wait: "Wait",
+        onboarding_wait_desc: "Open AirDows on the other device",
+        onboarding_choose: "Select",
+        onboarding_choose_desc: "Choose or drop your files",
+        onboarding_send: "Send",
+        onboarding_send_desc: "Keep both devices active",
+        onboarding_step_1_title: "Create a connection or use a code",
+        onboarding_step_1_hint: "Choose how you want to connect your devices",
+        onboarding_step_2_title: "Waiting for the other device",
+        onboarding_step_2_hint: "Open AirDows there and scan the QR or enter the four-digit code",
+        onboarding_step_3_title: "Connected",
+        onboarding_step_3_hint: "Now select your files",
+        onboarding_step_4_title: "Sending your files",
         onboarding_step_4_hint: "AirDows is moving the file. Keep both screens active until it arrives",
         onboarding_complete_title: "Transfer completed",
         onboarding_complete_hint: "The file arrived. You can transfer another one without reconnecting",
@@ -373,7 +385,7 @@
         shared_files_ready: "{count} files ready",
         shared_files_connect_hint: "Connect another device to send",
         shared_files_status: "Waiting for connection",
-        conn_status: "Connected to Remote Peer",
+        conn_status: "Connected · Now select your files",
         btn_disconnect: "Disconnect",
         btn_disconnect_title: "Disconnect pairing",
         drop_zone_title: "Drag & Drop Files Here",
@@ -423,7 +435,7 @@
         socket_disconnect: "Disconnected from signaling server. Trying to reconnect...",
         conn_connecting: "Connecting and establishing P2P channel...",
         peer_disconnected: "Peer disconnected from this session.",
-        p2p_active: "Secured P2P Connection Active",
+        p2p_active: "Connected · Now select your files",
         p2p_lost: "P2P Connection lost.",
         sending: "Sending data...",
         receiving: "Receiving data...",
@@ -440,34 +452,37 @@
       es: {
         title: "AirDows - Transferencia de Archivos P2P",
         subtitle: "Envía archivos entre Android, iPhone, Windows y Mac",
-        receive_badge: "Recibir",
-        receive_title: "Configurar como Receptor",
-        receive_desc: "Genera un código seguro de 4 dígitos o escanea el código QR para conectar otro dispositivo.",
-        btn_generate: "Generar código de emparejamiento",
+        receive_badge: "Recomendado",
+        receive_title: "Crear una conexión",
+        receive_desc: "Obtén un código temporal para abrir esta conexión en tu otro dispositivo.",
+        btn_generate: "Crear conexión",
         qr_hint: "Escanea con el móvil para emparejar al instante",
         divider_or: "O",
-        send_badge: "Enviar",
-        send_title: "Conectar al Receptor",
-        send_desc: "Introduce el código de emparejamiento de 4 dígitos que aparece en el dispositivo receptor para establecer una conexión directa.",
+        send_badge: "¿Ya tienes un código?",
+        send_title: "Introduce tu código",
+        send_desc: "Usa los cuatro dígitos que aparecen en el otro dispositivo para unirte a su conexión.",
+        join_label: "Código de conexión de 4 dígitos",
         join_placeholder: "Introduce el código de 4 dígitos",
-        btn_join: "Conectar dispositivo",
+        btn_join: "Tengo un código",
+        privacy_assurance: "Tus archivos viajan directamente entre tus dispositivos. AirDows no los almacena.",
         onboarding_aria: "Guía de transferencia de AirDows",
+        onboarding_title: "Envía un archivo en 4 pasos simples",
         onboarding_progress: "Paso {step} de 4",
-        onboarding_open: "Abre",
-        onboarding_open_desc: "AirDows en ambos dispositivos",
-        onboarding_connect: "Conecta",
-        onboarding_connect_desc: "Escanea el QR o escribe el código temporal",
-        onboarding_choose: "Elige",
-        onboarding_choose_desc: "Selecciona o suelta tus archivos",
-        onboarding_receive: "Recibe",
-        onboarding_receive_desc: "Mantén ambos dispositivos activos",
-        onboarding_step_1_title: "Abre AirDows en ambos dispositivos",
-        onboarding_step_1_hint: "Abre esta misma página en el dispositivo que quieres conectar",
-        onboarding_step_2_title: "Conecta los dispositivos",
-        onboarding_step_2_hint: "Escanea el QR o introduce el código temporal de cuatro dígitos",
-        onboarding_step_3_title: "Elige lo que quieres transferir",
-        onboarding_step_3_hint: "La conexión está lista. Selecciona archivos o arrástralos dentro de AirDows",
-        onboarding_step_4_title: "Mantén ambos dispositivos activos",
+        onboarding_start: "Empieza",
+        onboarding_start_desc: "Crea una conexión o usa un código",
+        onboarding_wait: "Espera",
+        onboarding_wait_desc: "Abre AirDows en el otro dispositivo",
+        onboarding_choose: "Selecciona",
+        onboarding_choose_desc: "Elige o suelta tus archivos",
+        onboarding_send: "Envía",
+        onboarding_send_desc: "Mantén ambos dispositivos activos",
+        onboarding_step_1_title: "Crea una conexión o usa un código",
+        onboarding_step_1_hint: "Elige cómo quieres conectar tus dispositivos",
+        onboarding_step_2_title: "Esperando al otro dispositivo",
+        onboarding_step_2_hint: "Abre AirDows allí y escanea el QR o introduce el código de cuatro dígitos",
+        onboarding_step_3_title: "Conectado",
+        onboarding_step_3_hint: "Ahora selecciona tus archivos",
+        onboarding_step_4_title: "Enviando tus archivos",
         onboarding_step_4_hint: "AirDows está moviendo el archivo. Mantén ambas pantallas activas hasta que llegue",
         onboarding_complete_title: "Transferencia completada",
         onboarding_complete_hint: "El archivo llegó. Puedes transferir otro sin volver a conectar",
@@ -488,7 +503,7 @@
         shared_files_ready: "{count} archivos listos",
         shared_files_connect_hint: "Conecta otro dispositivo para enviarlo",
         shared_files_status: "Esperando conexión",
-        conn_status: "Conectado al par remoto",
+        conn_status: "Conectado · Ahora selecciona tus archivos",
         btn_disconnect: "Desconectar",
         btn_disconnect_title: "Desconectar emparejamiento",
         drop_zone_title: "Arrastra y suelta archivos aquí",
@@ -538,7 +553,7 @@
         socket_disconnect: "Desconectado del servidor de señalización. Intentando reconectar...",
         conn_connecting: "Conectando y estableciendo canal P2P...",
         peer_disconnected: "El par se ha desconectado de esta sesión.",
-        p2p_active: "Conexión P2P segura activa",
+        p2p_active: "Conectado · Ahora selecciona tus archivos",
         p2p_lost: "Conexión P2P perdida.",
         sending: "Enviando datos...",
         receiving: "Recibiendo datos...",
