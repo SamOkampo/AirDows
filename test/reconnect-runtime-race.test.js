@@ -12,14 +12,91 @@ const ROOT = path.join(__dirname, '..');
 
 function loadAppHotfixHelpers() {
   const appSource = fs.readFileSync(path.join(ROOT, 'public/js/app.js'), 'utf8');
-  const helperSource = appSource.slice(0, appSource.indexOf('const pairingPrivacy ='));
+  const helperStartAnchor = 'function createPairingPrivacyFacade';
+  const helperEndAnchor = 'const pairingPrivacy =';
+  const helperStart = appSource.indexOf(helperStartAnchor);
+  const helperEnd = appSource.indexOf(helperEndAnchor);
+  assert.notEqual(helperStart, -1, `Missing app.js helper start anchor: ${helperStartAnchor}`);
+  assert.notEqual(helperEnd, -1, `Missing app.js helper end anchor: ${helperEndAnchor}`);
+  assert.ok(helperStart < helperEnd, 'app.js helper anchors are reordered');
+  const helperSource = appSource.slice(helperStart, helperEnd);
   const context = {};
   vm.runInNewContext(
-    `${helperSource}\n;globalThis.hotfixHelpers = { clearAutomaticReconnect, isAutomaticReconnectAllowed, runAutomaticReconnect, submitManualJoin };`,
+    `${helperSource}\n;globalThis.hotfixHelpers = { applyRecoveryState, clearAutomaticReconnect, isAutomaticReconnectAllowed, markManualActionDelivered, runAutomaticReconnect, submitManualJoin };`,
     context
   );
   return context.hotfixHelpers;
 }
+
+test('late expired recovery state cannot overwrite a pending manual reconnect guard', () => {
+  const { applyRecoveryState, isAutomaticReconnectAllowed } = loadAppHotfixHelpers();
+  const appSource = fs.readFileSync(path.join(ROOT, 'public/js/app.js'), 'utf8');
+  const state = applyRecoveryState('manual-reconnect', 'expired');
+
+  assert.equal(state, 'manual-reconnect');
+  assert.equal(isAutomaticReconnectAllowed(state), false);
+  assert.match(
+    appSource,
+    /onRecoveryStateChange = \(state\) => \{\s*const nextState = applyRecoveryState\(sessionRecoveryState, state\)/
+  );
+});
+
+test('late expired recovery state cannot schedule a new reconnect timer', () => {
+  const { applyRecoveryState, isAutomaticReconnectAllowed } = loadAppHotfixHelpers();
+  const state = applyRecoveryState('manual-reconnect', 'expired');
+  let timerScheduled = false;
+
+  if (isAutomaticReconnectAllowed(state)) timerScheduled = true;
+
+  assert.equal(timerScheduled, false);
+});
+
+test('captured reconnect callback stays blocked after a late expired recovery state', () => {
+  const { applyRecoveryState, runAutomaticReconnect } = loadAppHotfixHelpers();
+  let state = 'manual-reconnect';
+  let reconnectCalls = 0;
+  const capturedCallback = () => runAutomaticReconnect({
+    sessionState: state,
+    roomCode: '1234',
+    reconnect: () => { reconnectCalls += 1; }
+  });
+
+  state = applyRecoveryState(state, 'expired');
+
+  assert.equal(capturedCallback(), false);
+  assert.equal(reconnectCalls, 0);
+});
+
+test('recovery state changes remain active without a manual pairing guard', () => {
+  const { applyRecoveryState } = loadAppHotfixHelpers();
+
+  assert.equal(applyRecoveryState('paired', 'signaling-disconnected'), 'signaling-disconnected');
+  assert.equal(applyRecoveryState('signaling-disconnected', 'recovering'), 'recovering');
+  assert.equal(applyRecoveryState('recovering', 'expired'), 'expired');
+});
+
+test('manual reconnect guard releases through delivery, pairing, and reset lifecycle', () => {
+  const { isAutomaticReconnectAllowed, markManualActionDelivered } = loadAppHotfixHelpers();
+  const appSource = fs.readFileSync(path.join(ROOT, 'public/js/app.js'), 'utf8');
+  const deliveredState = markManualActionDelivered('manual-reconnect');
+
+  assert.equal(deliveredState, 'manual-pairing');
+  assert.equal(isAutomaticReconnectAllowed(deliveredState), false);
+  assert.equal(isAutomaticReconnectAllowed('paired'), true);
+  assert.equal(isAutomaticReconnectAllowed('unpaired'), true);
+  assert.match(
+    appSource,
+    /onCodeGenerated = \(code\) => \{\s*sessionRecoveryState = markManualActionDelivered\(sessionRecoveryState\)/
+  );
+  assert.match(
+    appSource,
+    /if \(!recovered\) \{\s*sessionRecoveryState = markManualActionDelivered\(sessionRecoveryState\)/
+  );
+  assert.match(
+    appSource,
+    /function resetApp\([\s\S]{0,250}sessionRecoveryState = 'unpaired';/
+  );
+});
 
 test('manual action pending cancels an existing reconnect timer', () => {
   const { clearAutomaticReconnect } = loadAppHotfixHelpers();

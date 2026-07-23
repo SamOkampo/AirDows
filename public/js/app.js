@@ -62,7 +62,19 @@ function createPairingPrivacyFacade(helper) {
 function isAutomaticReconnectAllowed(sessionState) {
   return sessionState !== 'signaling-disconnected' &&
     sessionState !== 'recovering' &&
-    sessionState !== 'manual-reconnect';
+    sessionState !== 'manual-reconnect' &&
+    sessionState !== 'manual-pairing';
+}
+
+function applyRecoveryState(currentState, nextState) {
+  if (currentState === 'manual-reconnect' || currentState === 'manual-pairing') {
+    return currentState;
+  }
+  return nextState;
+}
+
+function markManualActionDelivered(sessionState) {
+  return sessionState === 'manual-reconnect' ? 'manual-pairing' : sessionState;
 }
 
 function clearAutomaticReconnect(timer, clearTimeoutFn) {
@@ -845,6 +857,7 @@ document.addEventListener('DOMContentLoaded', () => {
   };
 
   socketManager.onCodeGenerated = (code) => {
+    sessionRecoveryState = markManualActionDelivered(sessionRecoveryState);
     roomCode = code;
     trackAnalytics('room_created');
     updateOnboarding(2);
@@ -876,6 +889,7 @@ document.addEventListener('DOMContentLoaded', () => {
     activeSocketGeneration = connectionGeneration;
     p2pConnected = false;
     if (!recovered) {
+      sessionRecoveryState = markManualActionDelivered(sessionRecoveryState);
       webrtcManager.prepareForNewPairingSignals();
       connectionEstablishedTracked = false;
       trackAnalytics('room_joined', { role });
@@ -937,7 +951,9 @@ document.addEventListener('DOMContentLoaded', () => {
   };
 
   socketManager.onRecoveryStateChange = (state) => {
-    sessionRecoveryState = state;
+    const nextState = applyRecoveryState(sessionRecoveryState, state);
+    if (nextState === sessionRecoveryState) return;
+    sessionRecoveryState = nextState;
     if (state === 'signaling-disconnected' || state === 'recovering') {
       beginSessionRecovery(state);
     }
@@ -1378,6 +1394,7 @@ document.addEventListener('DOMContentLoaded', () => {
       reconnectTimer = null;
     }
     reconnectAttempts = 0;
+    sessionRecoveryState = 'unpaired';
     p2pConnected = false;
     transferIsActive = false;
     releaseTransferWakeLock();
