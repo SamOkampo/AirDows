@@ -9,6 +9,9 @@ class WebRTCManager {
     this.DELIVERY_ACK_TIMEOUT = Number.isSafeInteger(options.deliveryAckTimeout)
       ? Math.max(1, options.deliveryAckTimeout)
       : 30000;
+    this.DELIVERY_ACK_RETRY_INTERVAL = Number.isSafeInteger(options.deliveryAckRetryInterval)
+      ? Math.max(1, options.deliveryAckRetryInterval)
+      : 2000;
     this.MAX_TRANSFER_ID_LENGTH = 128;
     this.socketManager = socketManager;
     this.peerConnection = null;
@@ -659,8 +662,7 @@ class WebRTCManager {
       if (!state.metadata) {
         const completed = this.completedTransfers.get(message.transferId);
         if (completed && completed.sessionGeneration === this.sessionGeneration &&
-            completed.size === message.size &&
-            completed.lastAckGeneration !== this.dataChannelGeneration) {
+            completed.size === message.size) {
           this.sendDeliveryControl({
             type: 'transfer-ack',
             transferId: message.transferId,
@@ -1100,7 +1102,8 @@ class WebRTCManager {
           ? this.activeSendTransfer
           : null,
         settled: false,
-        timeout: null
+        timeout: null,
+        retryTimeout: null
       };
 
       waiter.timeout = setTimeout(() => {
@@ -1115,6 +1118,24 @@ class WebRTCManager {
 
       this.deliveryWaiters.set(transferId, waiter);
     });
+  }
+
+  startDeliveryRetry(transferId, retry) {
+    const waiter = this.deliveryWaiters.get(transferId);
+    if (!waiter || waiter.settled || typeof retry !== 'function') return false;
+
+    const scheduleRetry = () => {
+      const current = this.deliveryWaiters.get(transferId);
+      if (current !== waiter || current.settled) return;
+      retry();
+      if (this.deliveryWaiters.get(transferId) !== waiter || waiter.settled) return;
+      waiter.retryTimeout = setTimeout(scheduleRetry, this.DELIVERY_ACK_RETRY_INTERVAL);
+      if (typeof waiter.retryTimeout.unref === 'function') waiter.retryTimeout.unref();
+    };
+
+    waiter.retryTimeout = setTimeout(scheduleRetry, this.DELIVERY_ACK_RETRY_INTERVAL);
+    if (typeof waiter.retryTimeout.unref === 'function') waiter.retryTimeout.unref();
+    return true;
   }
 
   createDeliveryError(code, message) {
@@ -1154,6 +1175,7 @@ class WebRTCManager {
 
     waiter.settled = true;
     clearTimeout(waiter.timeout);
+    if (waiter.retryTimeout) clearTimeout(waiter.retryTimeout);
     this.deliveryWaiters.delete(transferId);
 
     if (outcome === 'resolve') waiter.resolve();
@@ -1331,14 +1353,15 @@ class WebRTCManager {
       this.throwIfTransferCancelled(transfer);
       const deliveryPromise = this.createDeliveryWaiter(transfer.transferId, file.size);
       deliveryPromise.catch(() => {});
+      const finishedMessage = {
+        type: 'transfer-finished',
+        transferId: transfer.transferId,
+        size: file.size
+      };
 
       try {
         await this.sendWithBackpressure(
-          JSON.stringify({
-            type: 'transfer-finished',
-            transferId: transfer.transferId,
-            size: file.size
-          }),
+          JSON.stringify(finishedMessage),
           BUFFER_THRESHOLD,
           transfer.abortController.signal
         );
@@ -1347,6 +1370,10 @@ class WebRTCManager {
         throw err;
       }
 
+      this.startDeliveryRetry(
+        transfer.transferId,
+        () => this.sendDeliveryControl(finishedMessage)
+      );
       await deliveryPromise;
       this.stopNetworkDiagnostics();
 
