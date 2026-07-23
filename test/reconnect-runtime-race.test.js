@@ -4,10 +4,131 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
 const { SocketManager } = require('../public/js/socket-manager');
 const WebRTCManager = require('../public/js/webrtc-manager');
 
 const ROOT = path.join(__dirname, '..');
+
+function loadAppHotfixHelpers() {
+  const appSource = fs.readFileSync(path.join(ROOT, 'public/js/app.js'), 'utf8');
+  const helperSource = appSource.slice(0, appSource.indexOf('const pairingPrivacy ='));
+  const context = {};
+  vm.runInNewContext(
+    `${helperSource}\n;globalThis.hotfixHelpers = { clearAutomaticReconnect, isAutomaticReconnectAllowed, runAutomaticReconnect, submitManualJoin };`,
+    context
+  );
+  return context.hotfixHelpers;
+}
+
+test('manual action pending cancels an existing reconnect timer', () => {
+  const { clearAutomaticReconnect } = loadAppHotfixHelpers();
+  const appSource = fs.readFileSync(path.join(ROOT, 'public/js/app.js'), 'utf8');
+  const clearedTimers = [];
+
+  const state = clearAutomaticReconnect(42, (timer) => clearedTimers.push(timer));
+
+  assert.deepEqual(clearedTimers, [42]);
+  assert.equal(state.timer, null);
+  assert.match(
+    appSource,
+    /onManualActionPending = \(\) => \{[\s\S]{0,200}clearAutomaticReconnect\(reconnectTimer, clearTimeout\)/
+  );
+});
+
+test('manual action pending resets reconnect attempts', () => {
+  const { clearAutomaticReconnect } = loadAppHotfixHelpers();
+  const state = clearAutomaticReconnect(null, () => assert.fail('no timer should be cleared'));
+
+  assert.equal(state.attempts, 0);
+});
+
+test('automatic reconnect scheduling is forbidden during manual reconnect', () => {
+  const { isAutomaticReconnectAllowed } = loadAppHotfixHelpers();
+  const appSource = fs.readFileSync(path.join(ROOT, 'public/js/app.js'), 'utf8');
+
+  assert.equal(isAutomaticReconnectAllowed('manual-reconnect'), false);
+  assert.match(
+    appSource,
+    /function scheduleReconnect\(\) \{\s*if \(!isAutomaticReconnectAllowed\(sessionRecoveryState\)\) return;/
+  );
+});
+
+test('a captured reconnect callback is harmless after manual reconnect begins', () => {
+  const { runAutomaticReconnect } = loadAppHotfixHelpers();
+  const appSource = fs.readFileSync(path.join(ROOT, 'public/js/app.js'), 'utf8');
+  let sessionState = 'paired';
+  let reconnectCalls = 0;
+  const capturedCallback = () => runAutomaticReconnect({
+    sessionState,
+    roomCode: '1234',
+    reconnect: () => { reconnectCalls += 1; }
+  });
+
+  sessionState = 'manual-reconnect';
+
+  assert.equal(capturedCallback(), false);
+  assert.equal(reconnectCalls, 0);
+  assert.match(
+    appSource,
+    /reconnectTimer = setTimeout\(\(\) => \{[\s\S]{0,200}runAutomaticReconnect\(\{[\s\S]{0,200}sessionState: sessionRecoveryState/
+  );
+});
+
+test('join UI rejects four-character non-numeric codes with invalid_code', () => {
+  const { submitManualJoin } = loadAppHotfixHelpers();
+  const appSource = fs.readFileSync(path.join(ROOT, 'public/js/app.js'), 'utf8');
+
+  for (const code of ['12ab', 'abcd', '1 23', '１２３４']) {
+    const toasts = [];
+    const accepted = submitManualJoin(code, {
+      onInvalid: () => toasts.push('invalid_code'),
+      onValid: () => assert.fail(`invalid code ${code} was accepted`)
+    });
+
+    assert.equal(accepted, false);
+    assert.deepEqual(toasts, ['invalid_code']);
+  }
+  assert.match(
+    appSource,
+    /btnJoin\.addEventListener\('click',[\s\S]{0,150}const code = joinCodeInput\.value\.trim\(\);[\s\S]{0,80}submitManualJoin\(code/
+  );
+});
+
+test('invalid join input does not update onboarding or call SocketManager', () => {
+  const { submitManualJoin } = loadAppHotfixHelpers();
+  let onboardingUpdates = 0;
+  let joinCalls = 0;
+
+  submitManualJoin('12ab', {
+    onInvalid() {},
+    onValid() {
+      onboardingUpdates += 1;
+      joinCalls += 1;
+    }
+  });
+
+  assert.equal(onboardingUpdates, 0);
+  assert.equal(joinCalls, 0);
+});
+
+test('valid four-digit join input reaches SocketManager and onboarding', () => {
+  const { submitManualJoin } = loadAppHotfixHelpers();
+  const joinedCodes = [];
+  let onboardingStep = null;
+
+  const accepted = submitManualJoin('2468', {
+    onInvalid: () => assert.fail('valid code was rejected'),
+    onValid(code) {
+      onboardingStep = 2;
+      joinedCodes.push(code);
+    }
+  });
+
+  assert.equal(accepted, true);
+  assert.equal(onboardingStep, 2);
+  assert.deepEqual(joinedCodes, ['2468']);
+});
 
 class FakeSocket {
   constructor() {

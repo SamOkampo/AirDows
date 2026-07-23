@@ -59,6 +59,33 @@ function createPairingPrivacyFacade(helper) {
   });
 }
 
+function isAutomaticReconnectAllowed(sessionState) {
+  return sessionState !== 'signaling-disconnected' &&
+    sessionState !== 'recovering' &&
+    sessionState !== 'manual-reconnect';
+}
+
+function clearAutomaticReconnect(timer, clearTimeoutFn) {
+  if (timer !== null) clearTimeoutFn(timer);
+  return { timer: null, attempts: 0 };
+}
+
+function runAutomaticReconnect({ sessionState, roomCode, reconnect }) {
+  if (!roomCode || !isAutomaticReconnectAllowed(sessionState)) return false;
+  reconnect();
+  return true;
+}
+
+function submitManualJoin(rawCode, { onInvalid, onValid }) {
+  const code = String(rawCode || '').trim();
+  if (!/^\d{4}$/.test(code)) {
+    onInvalid();
+    return false;
+  }
+  onValid(code);
+  return true;
+}
+
 const pairingPrivacy = createPairingPrivacyFacade(window.PairingLinkPrivacy);
 const pairingLinkBootstrap = pairingPrivacy.consumeBootstrap();
 
@@ -925,6 +952,9 @@ document.addEventListener('DOMContentLoaded', () => {
   };
 
   socketManager.onManualActionPending = () => {
+    const clearedReconnect = clearAutomaticReconnect(reconnectTimer, clearTimeout);
+    reconnectTimer = clearedReconnect.timer;
+    reconnectAttempts = clearedReconnect.attempts;
     sessionRecoveryState = 'manual-reconnect';
     p2pConnected = false;
     switchView('setup');
@@ -980,7 +1010,7 @@ document.addEventListener('DOMContentLoaded', () => {
   };
 
   function scheduleReconnect() {
-    if (sessionRecoveryState === 'signaling-disconnected' || sessionRecoveryState === 'recovering') return;
+    if (!isAutomaticReconnectAllowed(sessionRecoveryState)) return;
     if (reconnectTimer || !roomCode || reconnectAttempts >= maxReconnectAttempts) {
       if (reconnectAttempts >= maxReconnectAttempts) {
         showToast(translate('p2p_lost'));
@@ -996,8 +1026,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null;
-      if (!roomCode) return;
-      webrtcManager.reconnect();
+      runAutomaticReconnect({
+        sessionState: sessionRecoveryState,
+        roomCode,
+        reconnect: () => webrtcManager.reconnect()
+      });
     }, delay);
   }
 
@@ -1238,12 +1271,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
   btnJoin.addEventListener('click', () => {
     const code = joinCodeInput.value.trim();
-    if (code.length !== 4) {
-      showToast(translate('invalid_code'));
-      return;
-    }
-    updateOnboarding(2);
-    socketManager.joinCode(code);
+    submitManualJoin(code, {
+      onInvalid: () => showToast(translate('invalid_code')),
+      onValid: () => {
+        updateOnboarding(2);
+        socketManager.joinCode(code);
+      }
+    });
   });
 
   // Support hitting Enter inside code input
