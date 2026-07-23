@@ -265,11 +265,13 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!onboardingGuide) return;
     onboardingStep = Math.max(1, Math.min(4, Number(step) || 1));
     onboardingComplete = Boolean(options.complete);
+    const titleKey = onboardingComplete
+      ? 'onboarding_complete_title'
+      : onboardingCopy[onboardingStep].title;
 
     onboardingProgress.textContent = translate('onboarding_progress').replace('{step}', onboardingStep);
-    onboardingCurrentTitle.textContent = translate(onboardingComplete
-      ? 'onboarding_complete_title'
-      : onboardingCopy[onboardingStep].title);
+    onboardingCurrentTitle.setAttribute('data-i18n', titleKey);
+    onboardingCurrentTitle.textContent = translate(titleKey);
     onboardingHint.textContent = translate(onboardingComplete
       ? 'onboarding_complete_hint'
       : onboardingCopy[onboardingStep].hint);
