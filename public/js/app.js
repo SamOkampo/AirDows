@@ -59,6 +59,45 @@ function createPairingPrivacyFacade(helper) {
   });
 }
 
+function isAutomaticReconnectAllowed(sessionState) {
+  return sessionState !== 'signaling-disconnected' &&
+    sessionState !== 'recovering' &&
+    sessionState !== 'manual-reconnect' &&
+    sessionState !== 'manual-pairing';
+}
+
+function applyRecoveryState(currentState, nextState) {
+  if (currentState === 'manual-reconnect' || currentState === 'manual-pairing') {
+    return currentState;
+  }
+  return nextState;
+}
+
+function markManualActionDelivered(sessionState) {
+  return sessionState === 'manual-reconnect' ? 'manual-pairing' : sessionState;
+}
+
+function clearAutomaticReconnect(timer, clearTimeoutFn) {
+  if (timer !== null) clearTimeoutFn(timer);
+  return { timer: null, attempts: 0 };
+}
+
+function runAutomaticReconnect({ sessionState, roomCode, reconnect }) {
+  if (!roomCode || !isAutomaticReconnectAllowed(sessionState)) return false;
+  reconnect();
+  return true;
+}
+
+function submitManualJoin(rawCode, { onInvalid, onValid }) {
+  const code = String(rawCode || '').trim();
+  if (!/^\d{4}$/.test(code)) {
+    onInvalid();
+    return false;
+  }
+  onValid(code);
+  return true;
+}
+
 const pairingPrivacy = createPairingPrivacyFacade(window.PairingLinkPrivacy);
 const pairingLinkBootstrap = pairingPrivacy.consumeBootstrap();
 
@@ -818,6 +857,7 @@ document.addEventListener('DOMContentLoaded', () => {
   };
 
   socketManager.onCodeGenerated = (code) => {
+    sessionRecoveryState = markManualActionDelivered(sessionRecoveryState);
     roomCode = code;
     trackAnalytics('room_created');
     updateOnboarding(2);
@@ -849,6 +889,7 @@ document.addEventListener('DOMContentLoaded', () => {
     activeSocketGeneration = connectionGeneration;
     p2pConnected = false;
     if (!recovered) {
+      sessionRecoveryState = markManualActionDelivered(sessionRecoveryState);
       webrtcManager.prepareForNewPairingSignals();
       connectionEstablishedTracked = false;
       trackAnalytics('room_joined', { role });
@@ -910,7 +951,9 @@ document.addEventListener('DOMContentLoaded', () => {
   };
 
   socketManager.onRecoveryStateChange = (state) => {
-    sessionRecoveryState = state;
+    const nextState = applyRecoveryState(sessionRecoveryState, state);
+    if (nextState === sessionRecoveryState) return;
+    sessionRecoveryState = nextState;
     if (state === 'signaling-disconnected' || state === 'recovering') {
       beginSessionRecovery(state);
     }
@@ -925,6 +968,9 @@ document.addEventListener('DOMContentLoaded', () => {
   };
 
   socketManager.onManualActionPending = () => {
+    const clearedReconnect = clearAutomaticReconnect(reconnectTimer, clearTimeout);
+    reconnectTimer = clearedReconnect.timer;
+    reconnectAttempts = clearedReconnect.attempts;
     sessionRecoveryState = 'manual-reconnect';
     p2pConnected = false;
     switchView('setup');
@@ -980,7 +1026,7 @@ document.addEventListener('DOMContentLoaded', () => {
   };
 
   function scheduleReconnect() {
-    if (sessionRecoveryState === 'signaling-disconnected' || sessionRecoveryState === 'recovering') return;
+    if (!isAutomaticReconnectAllowed(sessionRecoveryState)) return;
     if (reconnectTimer || !roomCode || reconnectAttempts >= maxReconnectAttempts) {
       if (reconnectAttempts >= maxReconnectAttempts) {
         showToast(translate('p2p_lost'));
@@ -996,8 +1042,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null;
-      if (!roomCode) return;
-      webrtcManager.reconnect();
+      runAutomaticReconnect({
+        sessionState: sessionRecoveryState,
+        roomCode,
+        reconnect: () => webrtcManager.reconnect()
+      });
     }, delay);
   }
 
@@ -1238,12 +1287,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
   btnJoin.addEventListener('click', () => {
     const code = joinCodeInput.value.trim();
-    if (code.length !== 4) {
-      showToast(translate('invalid_code'));
-      return;
-    }
-    updateOnboarding(2);
-    socketManager.joinCode(code);
+    submitManualJoin(code, {
+      onInvalid: () => showToast(translate('invalid_code')),
+      onValid: () => {
+        updateOnboarding(2);
+        socketManager.joinCode(code);
+      }
+    });
   });
 
   // Support hitting Enter inside code input
@@ -1344,6 +1394,7 @@ document.addEventListener('DOMContentLoaded', () => {
       reconnectTimer = null;
     }
     reconnectAttempts = 0;
+    sessionRecoveryState = 'unpaired';
     p2pConnected = false;
     transferIsActive = false;
     releaseTransferWakeLock();
