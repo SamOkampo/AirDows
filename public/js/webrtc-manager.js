@@ -325,6 +325,7 @@ class WebRTCManager {
       this.clearNegotiationDeadline();
       console.log(logMessage);
       this.rejectAllDeliveryWaiters(code, message);
+      this.rejectAllResumeWaiters(code, message);
       this.stopNetworkDiagnostics();
       if (!this.isClosing && this.onConnectionStateChange) {
         try {
@@ -929,13 +930,11 @@ class WebRTCManager {
       if (waiter && transfer && transfer.transferId === message.transferId &&
           this.isValidTransferSize(message.offset) && this.isValidTransferSize(message.size) &&
           message.size === transfer.totalBytes) {
-        this.resumeWaiters.delete(message.transferId);
-        if (typeof waiter === 'function') {
-          waiter(Math.min(message.offset, transfer.totalBytes));
-        } else {
-          clearTimeout(waiter.timeout);
-          waiter.resolve(Math.min(message.offset, transfer.totalBytes));
-        }
+        this.settleResumeWaiter(
+          message.transferId,
+          'resolve',
+          Math.min(message.offset, transfer.totalBytes)
+        );
       }
       return;
     }
@@ -946,13 +945,11 @@ class WebRTCManager {
       if (waiter && transfer && transfer.transferId === message.transferId &&
           this.isValidTransferSize(message.offset) && this.isValidTransferSize(message.size) &&
           message.size === transfer.totalBytes) {
-        this.resumeWaiters.delete(message.transferId);
-        if (typeof waiter === 'function') {
-          waiter(Math.min(message.offset, transfer.totalBytes));
-        } else {
-          clearTimeout(waiter.timeout);
-          waiter.resolve(Math.min(message.offset, transfer.totalBytes));
-        }
+        this.settleResumeWaiter(
+          message.transferId,
+          'resolve',
+          Math.min(message.offset, transfer.totalBytes)
+        );
       }
       return;
     }
@@ -1541,6 +1538,55 @@ class WebRTCManager {
     return true;
   }
 
+  getSenderFailureType(error) {
+    if (error && error.code === 'RELAY_LIMIT_REACHED') return 'relay-budget';
+    if (error && (
+      error.code === 'RECEIVER_NOT_READY' ||
+      String(error.code || '').startsWith('DELIVERY_')
+    )) {
+      return 'protocol';
+    }
+    return 'network';
+  }
+
+  finalizeSenderTransfer(transfer, error, fileName = transfer && transfer.fileName) {
+    if (!transfer) return false;
+    const cancelled = transfer.cancelled ||
+      (error && (error.name === 'AbortError' || error.code === 'TRANSFER_CANCELLED'));
+    const terminalState = cancelled ? 'cancelled' : 'failed';
+
+    if (!transfer.terminalState) {
+      transfer.terminalError = error;
+      this.transitionSenderTerminalState(transfer, terminalState);
+    } else if (transfer.terminalState !== terminalState) {
+      return false;
+    }
+
+    const terminalError = transfer.terminalError || error;
+    transfer.terminalError = terminalError;
+    transfer.cancelled = terminalState === 'cancelled';
+    transfer.abortController.abort();
+    if (transfer.reader) transfer.reader.cancel().catch(() => {});
+    this.settleResumeWaiter(transfer.transferId, 'reject', terminalError);
+    this.rejectDeliveryWaiter(transfer.transferId, terminalError, terminalState);
+    this.stopNetworkDiagnostics();
+
+    if (terminalState === 'cancelled') {
+      this.invokeSenderTerminalCallback(transfer, 'cancelled', () => {
+        if (this.onFileTransferCancelled) this.onFileTransferCancelled(fileName, true);
+      });
+    } else {
+      this.invokeSenderTerminalCallback(transfer, 'failed', () => {
+        this.reportTransferError(this.getSenderFailureType(terminalError), terminalError, fileName);
+      });
+    }
+
+    if (this.activeSendTransfer === transfer) {
+      this.activeSendTransfer = null;
+    }
+    return true;
+  }
+
   invokeSenderTerminalCallback(transfer, terminalState, callback) {
     if (!transfer || transfer.terminalState !== terminalState || transfer.terminalCallbackInvoked) return false;
     transfer.terminalCallbackInvoked = true;
@@ -1555,7 +1601,13 @@ class WebRTCManager {
   settleDeliveryWaiter(transferId, outcome, error, terminalState = outcome === 'resolve' ? 'completed' : 'failed') {
     const waiter = this.deliveryWaiters.get(transferId);
     if (!waiter || waiter.settled) return false;
-    if (waiter.transfer && !this.transitionSenderTerminalState(waiter.transfer, terminalState)) return false;
+    if (waiter.transfer) {
+      if (!waiter.transfer.terminalState) {
+        this.transitionSenderTerminalState(waiter.transfer, terminalState);
+      } else if (waiter.transfer.terminalState !== terminalState) {
+        return false;
+      }
+    }
 
     waiter.settled = true;
     if (waiter.timeout) clearTimeout(waiter.timeout);
@@ -1630,28 +1682,29 @@ class WebRTCManager {
     this.throwIfTransferCancelled(transfer);
     this.activeSendTransfer = transfer;
 
-    if (this.onFileTransferStart) {
-      this.onFileTransferStart(file.name, file.size, true, {
-        writeMode: 'send',
+    let resumeOffset;
+    let reader = null;
+    try {
+      if (this.onFileTransferStart) {
+        this.onFileTransferStart(file.name, file.size, true, {
+          writeMode: 'send',
+          performanceProfile: performanceProfile.label,
+          connectionType: performanceProfile.connectionType,
+          chunkSize: CHUNK_SIZE
+        });
+      }
+
+      const metadata = {
+        type: 'metadata',
+        name: file.name,
+        size: file.size,
+        mime: file.type || 'application/octet-stream',
+        transferId: transfer.transferId,
+        encryption: sessionKey ? 'aes-gcm-256' : null,
         performanceProfile: performanceProfile.label,
         connectionType: performanceProfile.connectionType,
         chunkSize: CHUNK_SIZE
-      });
-    }
-
-    const metadata = {
-      type: 'metadata',
-      name: file.name,
-      size: file.size,
-      mime: file.type || 'application/octet-stream',
-      transferId: transfer.transferId,
-      encryption: sessionKey ? 'aes-gcm-256' : null,
-      performanceProfile: performanceProfile.label,
-      connectionType: performanceProfile.connectionType,
-      chunkSize: CHUNK_SIZE
-    };
-    let resumeOffset;
-    try {
+      };
       this.throwIfTransferCancelled(transfer);
       await this.sendWithBackpressure(
         JSON.stringify(metadata),
@@ -1664,34 +1717,23 @@ class WebRTCManager {
         error.code = 'RECEIVER_NOT_READY';
         throw error;
       }
+
+      this.startNetworkDiagnostics({
+        direction: 'send',
+        fileName: file.name,
+        totalBytes: file.size,
+        getBytesTransferred: () => transfer.bytesTransferred
+      });
+
+      const stream = file.slice(resumeOffset).stream();
+      reader = stream.getReader();
+      transfer.reader = reader;
     } catch (err) {
-      const resumeWaiter = this.resumeWaiters.get(transfer.transferId);
-      if (resumeWaiter) clearTimeout(resumeWaiter.timeout);
-      this.resumeWaiters.delete(transfer.transferId);
-      if (err && err.code === 'RTC_TRANSFER_STALLED') {
-        this.transitionSenderTerminalState(transfer, 'failed');
-        this.invokeSenderTerminalCallback(transfer, 'failed', () => {
-          this.reportTransferError('network', err, file.name);
-        });
-      }
-      if (this.activeSendTransfer === transfer) {
-        this.activeSendTransfer = null;
-      }
-      throw err;
+      this.finalizeSenderTransfer(transfer, err, file.name);
+      throw transfer.terminalError || err;
     }
 
-    this.startNetworkDiagnostics({
-      direction: 'send',
-      fileName: file.name,
-      totalBytes: file.size,
-      getBytesTransferred: () => transfer.bytesTransferred
-    });
-
     let offset = resumeOffset;
-    const stream = file.slice(resumeOffset).stream();
-    const reader = stream.getReader();
-    transfer.reader = reader;
-
     try {
       while (true) {
         this.throwIfTransferCancelled(transfer);
@@ -1786,42 +1828,22 @@ class WebRTCManager {
         }
       });
     } catch (err) {
-      this.stopNetworkDiagnostics();
-
       if (transfer.proRequired || err.name === 'ProRequiredError') {
-        this.transitionSenderTerminalState(transfer, 'failed');
-        throw this.createProRequiredError();
+        err = transfer.terminalError || this.createProRequiredError();
+      } else if (transfer.cancelled || err.name === 'AbortError') {
+        err = transfer.terminalError || this.createTransferCancelledError();
       }
 
-      if (transfer.cancelled || err.name === 'AbortError') {
-        this.transitionSenderTerminalState(transfer, 'cancelled');
-        throw this.createTransferCancelledError();
-      }
-
-      if ([
-        'DELIVERY_ACK_TIMEOUT',
-        'DELIVERY_REJECTED',
-        'DELIVERY_TERMINAL_SEND_TIMEOUT',
-        'DELIVERY_TERMINAL_SEND_FAILED',
-        'RTC_TRANSFER_STALLED'
-      ].includes(err.code)) {
-        this.transitionSenderTerminalState(transfer, 'failed');
-        this.invokeSenderTerminalCallback(transfer, 'failed', () => {
-          this.reportTransferError(err.code === 'RTC_TRANSFER_STALLED' ? 'network' : 'protocol', err, file.name);
-        });
-      }
-
-      this.transitionSenderTerminalState(transfer, 'failed');
-
+      this.finalizeSenderTransfer(transfer, err, file.name);
       console.error('Error during file stream send:', err);
-      throw err;
+      throw transfer.terminalError || err;
     } finally {
       this.rejectDeliveryWaiter(
         transfer.transferId,
         this.createDeliveryError('DELIVERY_ABORTED', 'Delivery confirmation was abandoned.')
       );
       this.flushRelayUsage();
-      reader.releaseLock();
+      if (reader) reader.releaseLock();
       if (this.activeSendTransfer === transfer) {
         this.activeSendTransfer = null;
       }
@@ -1838,24 +1860,59 @@ class WebRTCManager {
 
   waitForReceiverReady(transfer) {
     return new Promise((resolve, reject) => {
+      const abort = () => {
+        this.settleResumeWaiter(
+          transfer.transferId,
+          'reject',
+          this.createTransferCancelledError()
+        );
+      };
       const timeout = setTimeout(() => {
-        this.resumeWaiters.delete(transfer.transferId);
-        resolve(null);
+        this.settleResumeWaiter(transfer.transferId, 'resolve', null);
       }, this.RECEIVER_READY_TIMEOUT);
 
-      this.resumeWaiters.set(transfer.transferId, { resolve, reject, timeout });
+      this.resumeWaiters.set(transfer.transferId, {
+        resolve,
+        reject,
+        timeout,
+        abort,
+        signal: transfer.abortController.signal,
+        settled: false
+      });
+      if (transfer.abortController.signal.aborted) {
+        abort();
+      } else {
+        transfer.abortController.signal.addEventListener('abort', abort, { once: true });
+      }
     });
   }
 
+  settleResumeWaiter(transferId, outcome, value) {
+    const waiter = this.resumeWaiters.get(transferId);
+    if (!waiter) return false;
+    this.resumeWaiters.delete(transferId);
+    if (typeof waiter === 'function') {
+      waiter(outcome === 'resolve' ? value : null);
+      return true;
+    }
+    if (waiter.settled) return false;
+    waiter.settled = true;
+    clearTimeout(waiter.timeout);
+    if (waiter.signal && waiter.abort) {
+      waiter.signal.removeEventListener('abort', waiter.abort);
+    }
+    if (outcome === 'resolve') waiter.resolve(value);
+    else waiter.reject(value);
+    return true;
+  }
+
   rejectAllResumeWaiters(code, message) {
-    for (const [transferId, waiter] of this.resumeWaiters.entries()) {
-      this.resumeWaiters.delete(transferId);
-      if (typeof waiter === 'function') {
-        waiter(null);
-      } else {
-        clearTimeout(waiter.timeout);
-        waiter.reject(this.createDeliveryError(code, message));
-      }
+    for (const transferId of [...this.resumeWaiters.keys()]) {
+      this.settleResumeWaiter(
+        transferId,
+        'reject',
+        this.createDeliveryError(code, message)
+      );
     }
   }
 
@@ -2038,26 +2095,12 @@ class WebRTCManager {
     if (!transfer || transfer.cancelled || transfer.terminalState) return false;
 
     const cancelError = this.createTransferCancelledError();
-    const settled = this.rejectDeliveryWaiter(transfer.transferId, cancelError, 'cancelled');
-    if (!settled && !this.transitionSenderTerminalState(transfer, 'cancelled')) return false;
     transfer.cancelled = true;
-    transfer.abortController.abort();
-    this.stopNetworkDiagnostics();
-
-    if (transfer.reader) {
-      transfer.reader.cancel().catch(() => {});
-    }
-
     this.sendDeliveryControl({
       type: 'transfer-cancelled',
       transferId: transfer.transferId
     });
-
-    this.invokeSenderTerminalCallback(transfer, 'cancelled', () => {
-      if (this.onFileTransferCancelled) this.onFileTransferCancelled(transfer.fileName, true);
-    });
-
-    return true;
+    return this.finalizeSenderTransfer(transfer, cancelError, transfer.fileName);
   }
 
   waitForBufferedAmountLow(signal) {

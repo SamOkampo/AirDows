@@ -1052,7 +1052,9 @@ test('receiver finalization error cannot also invoke successful completion', asy
 });
 
 test('duplicate transfer-finished messages finalize only once', async () => {
-  const { manager, channel, state, transferId, size } = prepareReceiver();
+  const { manager, channel, state, transferId, size } = prepareReceiver({
+    managerOptions: { deliveryAckCooldown: 1000 }
+  });
   let completions = 0;
   manager.onFileTransferComplete = () => { completions += 1; };
   await sendFinished(manager, transferId, size);
@@ -1538,6 +1540,141 @@ test('stalled initial send reports one failure and releases active UI state', as
   channel.close();
   if (channel.onerror) channel.onerror(new Error('late synthetic channel error'));
   assert.equal(failureCallbacks, 1);
+});
+
+test('RECEIVER_NOT_READY performs one complete sender terminal cleanup', async () => {
+  const manager = createManager();
+  const channel = new FakeDataChannel();
+  let failures = 0;
+  let wakeLockHeld = true;
+  let uiState = 'sending';
+  manager.RECEIVER_READY_TIMEOUT = 5;
+  manager.reportTransferError = WebRTCManager.prototype.reportTransferError.bind(manager);
+  manager.onTransferError = () => {
+    failures += 1;
+    wakeLockHeld = false;
+    uiState = 'ready';
+  };
+  manager.setDataChannel(channel);
+  const sending = manager.sendFile(createFile([1], 'not-ready.bin'), {
+    transferId: 'receiver-not-ready'
+  });
+
+  await waitForControl(channel, 'metadata');
+  const transfer = manager.activeSendTransfer;
+  await assert.rejects(sending, { code: 'RECEIVER_NOT_READY' });
+
+  assert.equal(failures, 1);
+  assert.equal(transfer.terminalState, 'failed');
+  assert.equal(transfer.terminalError.code, 'RECEIVER_NOT_READY');
+  assert.equal(manager.activeSendTransfer, null);
+  assert.equal(manager.resumeWaiters.size, 0);
+  assert.equal(manager.deliveryWaiters.size, 0);
+  assert.equal(wakeLockHeld, false);
+  assert.equal(uiState, 'ready');
+
+  channel.close();
+  channel.onerror?.(new Error('late channel error'));
+  assert.equal(failures, 1);
+});
+
+test('local cancellation immediately interrupts receiver readiness wait', async () => {
+  const manager = createManager();
+  const channel = new FakeDataChannel();
+  let cancellations = 0;
+  let failures = 0;
+  manager.RECEIVER_READY_TIMEOUT = 1000;
+  manager.onFileTransferCancelled = () => { cancellations += 1; };
+  manager.onTransferError = () => { failures += 1; };
+  manager.setDataChannel(channel);
+  const sending = manager.sendFile(createFile([1], 'cancel-ready.bin'), {
+    transferId: 'cancel-receiver-ready'
+  });
+
+  await waitForControl(channel, 'metadata');
+  const transfer = manager.activeSendTransfer;
+  assert.equal(manager.resumeWaiters.size, 1);
+  assert.equal(manager.cancelActiveTransfer(), true);
+  await assert.rejects(sending, { code: 'TRANSFER_CANCELLED' });
+
+  assert.equal(cancellations, 1);
+  assert.equal(failures, 0);
+  assert.equal(transfer.terminalState, 'cancelled');
+  assert.equal(manager.activeSendTransfer, null);
+  assert.equal(manager.resumeWaiters.size, 0);
+  assert.equal(manager.deliveryWaiters.size, 0);
+});
+
+for (const terminalEvent of ['close', 'error']) {
+  test(`DataChannel ${terminalEvent} during receiver readiness reports one terminal failure`, async () => {
+    const manager = createManager();
+    const channel = new FakeDataChannel();
+    let failures = 0;
+    manager.RECEIVER_READY_TIMEOUT = 1000;
+    manager.reportTransferError = WebRTCManager.prototype.reportTransferError.bind(manager);
+    manager.onTransferError = () => { failures += 1; };
+    manager.setDataChannel(channel);
+    const sending = manager.sendFile(createFile([1], `${terminalEvent}.bin`), {
+      transferId: `ready-${terminalEvent}`
+    });
+
+    await waitForControl(channel, 'metadata');
+    const transfer = manager.activeSendTransfer;
+    if (terminalEvent === 'close') {
+      channel.close();
+    } else {
+      channel.onerror(new Error('synthetic readiness error'));
+    }
+    await assert.rejects(sending, (error) => (
+      error.code === (terminalEvent === 'close' ? 'DATA_CHANNEL_CLOSED' : 'DATA_CHANNEL_ERROR')
+    ));
+
+    assert.equal(failures, 1);
+    assert.equal(transfer.terminalState, 'failed');
+    assert.equal(manager.activeSendTransfer, null);
+    assert.equal(manager.resumeWaiters.size, 0);
+    channel.close();
+    channel.onerror?.(new Error('late duplicate error'));
+    assert.equal(failures, 1);
+  });
+}
+
+test('a valid transfer can follow a receiver-readiness cleanup on the same channel', async () => {
+  const manager = createManager();
+  const channel = new FakeDataChannel();
+  manager.RECEIVER_READY_TIMEOUT = 5;
+  manager.setDataChannel(channel);
+
+  const first = manager.sendFile(createFile([1], 'first.bin'), {
+    transferId: 'not-ready-first'
+  });
+  await assert.rejects(first, { code: 'RECEIVER_NOT_READY' });
+  assert.equal(manager.activeSendTransfer, null);
+
+  channel.onSend = (raw) => {
+    if (typeof raw !== 'string') return;
+    const message = JSON.parse(raw);
+    if (message.type === 'metadata') {
+      setImmediate(() => manager.handleIncomingTextMessage(JSON.stringify({
+        type: 'receiver-ready',
+        transferId: message.transferId,
+        offset: 0,
+        size: message.size
+      })));
+    } else if (message.type === 'transfer-finished') {
+      setImmediate(() => manager.handleTransferAck({
+        type: 'transfer-ack',
+        transferId: message.transferId,
+        size: message.size
+      }));
+    }
+  };
+
+  await manager.sendFile(createFile([], 'second.bin'), {
+    transferId: 'ready-second'
+  });
+  assert.equal(manager.activeSendTransfer, null);
+  assert.equal(controlMessages(channel, 'transfer-finished').at(-1).transferId, 'ready-second');
 });
 
 test('stalled delivery retry runs terminal failure cleanup exactly once', async () => {
