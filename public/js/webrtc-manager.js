@@ -217,9 +217,29 @@ class WebRTCManager {
     }
 
     const channelGeneration = ++this.dataChannelGeneration;
+    let terminalEventHandled = false;
     this.dataChannel = channel;
     this.dataChannel.binaryType = 'arraybuffer';
     this.dataChannel.bufferedAmountLowThreshold = this.BUFFER_LOW_THRESHOLD;
+
+    const handleTerminalEvent = (code, message, logMessage) => {
+      if (terminalEventHandled || this.dataChannel !== channel ||
+          this.dataChannelGeneration !== channelGeneration) return false;
+
+      terminalEventHandled = true;
+      this.dataChannelGeneration += 1;
+      console.log(logMessage);
+      this.rejectAllDeliveryWaiters(code, message);
+      this.stopNetworkDiagnostics();
+      if (!this.isClosing && this.onConnectionStateChange) {
+        try {
+          this.onConnectionStateChange('disconnected');
+        } catch (err) {
+          console.error('Data channel disconnection callback failed');
+        }
+      }
+      return true;
+    };
 
     this.dataChannel.onopen = () => {
       if (this.dataChannel !== channel || this.dataChannelGeneration !== channelGeneration) return;
@@ -230,21 +250,21 @@ class WebRTCManager {
     };
 
     this.dataChannel.onclose = () => {
-      if (this.dataChannel !== channel || this.dataChannelGeneration !== channelGeneration) return;
-      this.dataChannelGeneration += 1;
-      console.log('Data channel state is: CLOSED');
-      this.rejectAllDeliveryWaiters('DATA_CHANNEL_CLOSED', 'Data connection closed before delivery confirmation.');
-      this.stopNetworkDiagnostics();
-      if (!this.isClosing && this.onConnectionStateChange) {
-        this.onConnectionStateChange('disconnected');
-      }
+      handleTerminalEvent(
+        'DATA_CHANNEL_CLOSED',
+        'Data connection closed before delivery confirmation.',
+        'Data channel state is: CLOSED'
+      );
     };
 
     this.dataChannel.onerror = (error) => {
-      if (this.dataChannel !== channel || this.dataChannelGeneration !== channelGeneration) return;
-      this.dataChannelGeneration += 1;
+      const handled = handleTerminalEvent(
+        'DATA_CHANNEL_ERROR',
+        'Data connection failed before delivery confirmation.',
+        'Data channel state is: ERROR'
+      );
+      if (!handled) return;
       console.error('Data channel error:', error);
-      this.rejectAllDeliveryWaiters('DATA_CHANNEL_ERROR', 'Data connection failed before delivery confirmation.');
       this.cleanupReceiverDiskStream().catch((err) => {
         console.error('Error cleaning receiver stream after data channel error:', err);
       });
@@ -1503,6 +1523,7 @@ class WebRTCManager {
         'DELIVERY_ACK_TIMEOUT',
         'DELIVERY_REJECTED',
         'DELIVERY_TERMINAL_SEND_TIMEOUT',
+        'DELIVERY_TERMINAL_SEND_FAILED',
         'RTC_TRANSFER_STALLED'
       ].includes(err.code)) {
         this.transitionSenderTerminalState(transfer, 'failed');

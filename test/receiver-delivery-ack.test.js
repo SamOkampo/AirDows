@@ -256,13 +256,19 @@ test('an immediate ACK after terminal send settles the registered waiter safely'
   assert.equal(manager.deliveryWaiters.size, 0);
 });
 
-test('terminal send failure rejects separately from an ACK timeout', async () => {
+test('terminal send failure runs sender failure cleanup exactly once', async () => {
   const manager = createManager({
     deliveryAckTimeout: 1000,
     deliveryTerminalSendTimeout: 100
   });
   const file = createFile([], 'empty.bin');
   const transferId = 'terminal-send-failure';
+  let failureCallbacks = 0;
+  let wakeLockHeld = true;
+  let uiState = 'sending';
+  let callbackTerminalState = null;
+  let transfer = null;
+  let waiter = null;
   let channel;
   channel = new FakeDataChannel((data) => {
     if (typeof data !== 'string') return;
@@ -279,9 +285,18 @@ test('terminal send failure rejects separately from an ACK timeout', async () =>
   const send = channel.send.bind(channel);
   channel.send = (data) => {
     if (typeof data === 'string' && JSON.parse(data).type === 'transfer-finished') {
+      transfer = manager.activeSendTransfer;
+      waiter = manager.deliveryWaiters.get(transferId);
       throw new Error('synthetic terminal send failure');
     }
     return send(data);
+  };
+  manager.reportTransferError = WebRTCManager.prototype.reportTransferError.bind(manager);
+  manager.onTransferError = () => {
+    failureCallbacks += 1;
+    callbackTerminalState = manager.activeSendTransfer?.terminalState || null;
+    wakeLockHeld = false;
+    uiState = 'ready';
   };
   manager.setDataChannel(channel);
 
@@ -289,7 +304,25 @@ test('terminal send failure rejects separately from an ACK timeout', async () =>
     manager.sendFile(file, { transferId }),
     { code: 'DELIVERY_TERMINAL_SEND_FAILED' }
   );
+  assert.ok(transfer);
+  assert.ok(waiter);
+  assert.equal(failureCallbacks, 1);
+  assert.equal(callbackTerminalState, 'failed');
+  assert.equal(wakeLockHeld, false);
+  assert.equal(uiState, 'ready');
+  assert.equal(transfer.terminalState, 'failed');
+  assert.equal(waiter.settled, true);
+  assert.equal(waiter.timeout, null);
+  assert.equal(waiter.retryTimeout, null);
+  assert.equal(waiter.retryAbortController.signal.aborted, true);
   assert.equal(manager.deliveryWaiters.size, 0);
+  assert.equal(manager.activeSendTransfer, null);
+
+  channel.close();
+  if (channel.onerror) channel.onerror(new Error('late synthetic channel error'));
+  assert.equal(failureCallbacks, 1);
+  assert.equal(manager.deliveryWaiters.size, 0);
+  assert.equal(manager.activeSendTransfer, null);
 });
 
 test('congested terminal timeout runs sender failure cleanup exactly once', async () => {
@@ -566,6 +599,132 @@ test('data-channel closure rejects a pending ACK immediately', async () => {
   await waitForControl(channel, 'transfer-finished');
   channel.close();
   await assert.rejects(promise, { code: 'DATA_CHANNEL_CLOSED' });
+});
+
+test('data-channel error followed by close disconnects and rejects waiters exactly once', async () => {
+  const manager = createManager({ deliveryAckTimeout: 1000 });
+  const channel = new FakeDataChannel();
+  const states = [];
+  const rejectionCodes = [];
+  const rejectAllDeliveryWaiters = manager.rejectAllDeliveryWaiters.bind(manager);
+  manager.onConnectionStateChange = (state) => states.push(state);
+  manager.rejectAllDeliveryWaiters = (code, message) => {
+    rejectionCodes.push(code);
+    return rejectAllDeliveryWaiters(code, message);
+  };
+  manager.setDataChannel(channel);
+  const waiter = manager.createDeliveryWaiter('error-then-close', 1);
+
+  channel.onerror(new Error('synthetic channel error'));
+  channel.close();
+
+  await assert.rejects(waiter, { code: 'DATA_CHANNEL_ERROR' });
+  assert.deepEqual(states, ['disconnected']);
+  assert.deepEqual(rejectionCodes, ['DATA_CHANNEL_ERROR']);
+  assert.equal(manager.deliveryWaiters.size, 0);
+});
+
+test('throwing disconnection callback cannot interrupt terminal cleanup or waiter rejection', async () => {
+  const manager = createManager({ deliveryAckTimeout: 1000 });
+  const channel = new FakeDataChannel();
+  const rejectionCodes = [];
+  let notifications = 0;
+  let diagnosticsStops = 0;
+  let receiverCleanups = 0;
+  const rejectAllDeliveryWaiters = manager.rejectAllDeliveryWaiters.bind(manager);
+  manager.onConnectionStateChange = () => {
+    notifications += 1;
+    throw new Error('synthetic UI callback failure');
+  };
+  manager.stopNetworkDiagnostics = () => {
+    diagnosticsStops += 1;
+  };
+  manager.cleanupReceiverDiskStream = async () => {
+    receiverCleanups += 1;
+  };
+  manager.rejectAllDeliveryWaiters = (code, message) => {
+    rejectionCodes.push(code);
+    return rejectAllDeliveryWaiters(code, message);
+  };
+  manager.setDataChannel(channel);
+  const waiter = manager.createDeliveryWaiter('throwing-disconnect-callback', 1);
+
+  assert.doesNotThrow(() => channel.onerror(new Error('synthetic channel error')));
+  channel.onclose();
+
+  await assert.rejects(waiter, { code: 'DATA_CHANNEL_ERROR' });
+  assert.equal(notifications, 1);
+  assert.equal(diagnosticsStops, 1);
+  assert.equal(receiverCleanups, 1);
+  assert.deepEqual(rejectionCodes, ['DATA_CHANNEL_ERROR']);
+  assert.equal(manager.deliveryWaiters.size, 0);
+});
+
+test('data-channel close followed by error keeps the close as the only terminal event', async () => {
+  const manager = createManager({ deliveryAckTimeout: 1000 });
+  const channel = new FakeDataChannel();
+  const states = [];
+  const rejectionCodes = [];
+  const rejectAllDeliveryWaiters = manager.rejectAllDeliveryWaiters.bind(manager);
+  manager.onConnectionStateChange = (state) => states.push(state);
+  manager.rejectAllDeliveryWaiters = (code, message) => {
+    rejectionCodes.push(code);
+    return rejectAllDeliveryWaiters(code, message);
+  };
+  manager.setDataChannel(channel);
+  const waiter = manager.createDeliveryWaiter('close-then-error', 1);
+
+  channel.close();
+  channel.onerror(new Error('late synthetic channel error'));
+
+  await assert.rejects(waiter, { code: 'DATA_CHANNEL_CLOSED' });
+  assert.deepEqual(states, ['disconnected']);
+  assert.deepEqual(rejectionCodes, ['DATA_CHANNEL_CLOSED']);
+  assert.equal(manager.deliveryWaiters.size, 0);
+});
+
+test('duplicate data-channel terminal events remain idempotent', () => {
+  const manager = createManager();
+  const channel = new FakeDataChannel();
+  const states = [];
+  const rejectionCodes = [];
+  manager.onConnectionStateChange = (state) => states.push(state);
+  manager.rejectAllDeliveryWaiters = (code) => {
+    rejectionCodes.push(code);
+  };
+  manager.setDataChannel(channel);
+
+  channel.onerror(new Error('first synthetic channel error'));
+  channel.onerror(new Error('duplicate synthetic channel error'));
+  channel.onclose();
+  channel.onclose();
+
+  assert.deepEqual(states, ['disconnected']);
+  assert.deepEqual(rejectionCodes, ['DATA_CHANNEL_ERROR']);
+});
+
+test('obsolete channel terminal events are ignored while the current channel closes normally', () => {
+  const manager = createManager();
+  const oldChannel = new FakeDataChannel();
+  const currentChannel = new FakeDataChannel();
+  const states = [];
+  const rejectionCodes = [];
+  manager.onConnectionStateChange = (state) => states.push(state);
+  manager.setDataChannel(oldChannel);
+  manager.setDataChannel(currentChannel);
+  manager.rejectAllDeliveryWaiters = (code) => {
+    rejectionCodes.push(code);
+  };
+
+  oldChannel.onerror(new Error('obsolete synthetic channel error'));
+  oldChannel.onclose();
+  assert.deepEqual(states, []);
+  assert.deepEqual(rejectionCodes, []);
+
+  currentChannel.close();
+  currentChannel.onerror(new Error('late current channel error'));
+  assert.deepEqual(states, ['disconnected']);
+  assert.deepEqual(rejectionCodes, ['DATA_CHANNEL_CLOSED']);
 });
 
 test('WebRTCManager.close clears ACK waiters and timers', async () => {
@@ -1282,7 +1441,7 @@ test('slow DataChannel progress keeps the stall watchdog alive', async () => {
 });
 
 test('observed buffer progress restarts the complete stall deadline', async () => {
-  const manager = createManager({ rtcTransferStallTimeout: 30 });
+  const manager = createManager({ rtcTransferStallTimeout: 100 });
   const channel = new FakeDataChannel();
   manager.setDataChannel(channel);
   channel.bufferedAmountLowThreshold = 0;
@@ -1295,7 +1454,7 @@ test('observed buffer progress restarts the complete stall deadline', async () =
   await new Promise((resolve) => setTimeout(resolve, 20));
   channel.bufferedAmount = 50;
   channel.emit('bufferedamountlow');
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  await new Promise((resolve) => setTimeout(resolve, 60));
   assert.equal(settled, false);
 
   channel.bufferedAmount = 0;
