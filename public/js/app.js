@@ -59,6 +59,35 @@ function createPairingPrivacyFacade(helper) {
   });
 }
 
+function createReceivedBlobUrlLifecycle(downloadLink, urlApi) {
+  let activeUrl = null;
+
+  const clear = () => {
+    if (!activeUrl) return false;
+    const urlToRevoke = activeUrl;
+    activeUrl = null;
+    downloadLink.href = '#';
+    downloadLink.removeAttribute('download');
+    urlApi.revokeObjectURL(urlToRevoke);
+    return true;
+  };
+
+  const install = (blob, fileName) => {
+    clear();
+    const nextUrl = urlApi.createObjectURL(blob);
+    activeUrl = nextUrl;
+    downloadLink.href = nextUrl;
+    downloadLink.setAttribute('download', fileName);
+    return nextUrl;
+  };
+
+  return Object.freeze({
+    clear,
+    install,
+    getActiveUrl: () => activeUrl
+  });
+}
+
 function isAutomaticReconnectAllowed(sessionState) {
   return sessionState !== 'signaling-disconnected' &&
     sessionState !== 'recovering' &&
@@ -167,6 +196,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const completedFileSize = document.getElementById('completed-file-size');
   const btnDownload = document.getElementById('btn-download');
   const btnResetTransfer = document.getElementById('btn-reset-transfer');
+  const receivedBlobUrls = createReceivedBlobUrlLifecycle(btnDownload, URL);
 
   // History Elements
   const historyContainer = document.getElementById('history-container');
@@ -1092,6 +1122,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   webrtcManager.onFileTransferStart = (fileName, totalBytes, isSending, options = {}) => {
+    receivedBlobUrls.clear();
     activeTransferMode = options.writeMode || 'send';
     transferIsActive = true;
     acquireTransferWakeLock();
@@ -1180,6 +1211,7 @@ document.addEventListener('DOMContentLoaded', () => {
     completedFileName.textContent = fileName;
 
     if (options.savedToDisk) {
+      receivedBlobUrls.clear();
       completedFileSize.textContent = translate('saved_to_disk');
       btnDownload.classList.add('hidden');
       appendHistoryItem(fileName, translate('saved_to_disk'), 'received');
@@ -1188,9 +1220,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const sizeStr = formatBytes(fileBlob.size);
       completedFileSize.textContent = sizeStr;
       
-      const fileUrl = URL.createObjectURL(fileBlob);
-      btnDownload.href = fileUrl;
-      btnDownload.setAttribute('download', fileName);
+      receivedBlobUrls.install(fileBlob, fileName);
       btnDownload.classList.remove('hidden');
 
       appendHistoryItem(fileName, sizeStr, 'received');
@@ -1203,6 +1233,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     } else {
       // Sent mode
+      receivedBlobUrls.clear();
       const sizeStr = formatBytes(currentFileTransferSize);
       completedFileSize.textContent = translate('sent_success');
       btnDownload.classList.add('hidden');
@@ -1238,6 +1269,7 @@ document.addEventListener('DOMContentLoaded', () => {
   };
 
   webrtcManager.onTransferError = (details = {}) => {
+    receivedBlobUrls.clear();
     activeTransferMode = 'idle';
     transferIsActive = false;
     releaseTransferWakeLock();
@@ -1257,6 +1289,7 @@ document.addEventListener('DOMContentLoaded', () => {
   };
 
   webrtcManager.onFileTransferCancelled = (fileName, isLocal) => {
+    receivedBlobUrls.clear();
     activeTransferMode = 'idle';
     transferIsActive = false;
     releaseTransferWakeLock();
@@ -1315,12 +1348,7 @@ document.addEventListener('DOMContentLoaded', () => {
     completedCard.classList.add('hidden');
     dropZone.classList.remove('hidden');
     updateOnboarding(3);
-    
-    // Revoke object URL to free memory
-    if (btnDownload.href && btnDownload.href.startsWith('blob:')) {
-      URL.revokeObjectURL(btnDownload.href);
-      btnDownload.href = '#';
-    }
+    receivedBlobUrls.clear();
   });
 
   btnSendText.addEventListener('click', () => {
@@ -1393,6 +1421,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // --- APP RESET & CLEANUP ---
   function resetApp({ preserveQueue = false } = {}) {
+    receivedBlobUrls.clear();
     if (reconnectTimer) {
       clearTimeout(reconnectTimer);
       reconnectTimer = null;
@@ -1447,12 +1476,6 @@ document.addEventListener('DOMContentLoaded', () => {
     historyContainer.classList.add('hidden');
     renderQueue();
 
-    // Revoke download url if active
-    if (btnDownload.href && btnDownload.href.startsWith('blob:')) {
-      URL.revokeObjectURL(btnDownload.href);
-      btnDownload.href = '#';
-    }
-
     switchView('setup');
   }
 
@@ -1481,6 +1504,10 @@ document.addEventListener('DOMContentLoaded', () => {
   window.addEventListener('online', () => {
     showToast(translate('connection_recovered'));
     socketManager.ensureConnected();
+  });
+
+  window.addEventListener('pagehide', () => {
+    receivedBlobUrls.clear();
   });
 
   document.addEventListener('visibilitychange', () => {
