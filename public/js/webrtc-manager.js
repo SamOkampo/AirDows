@@ -1482,7 +1482,7 @@ class WebRTCManager {
         throw this.createTransferCancelledError();
       }
 
-      if (['DELIVERY_ACK_TIMEOUT', 'DELIVERY_REJECTED'].includes(err.code)) {
+      if (['DELIVERY_ACK_TIMEOUT', 'DELIVERY_REJECTED', 'DELIVERY_TERMINAL_SEND_TIMEOUT'].includes(err.code)) {
         this.invokeSenderTerminalCallback(transfer, 'failed', () => {
           this.reportTransferError('protocol', err, file.name);
         });

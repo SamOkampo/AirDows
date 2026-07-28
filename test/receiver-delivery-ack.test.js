@@ -291,13 +291,18 @@ test('terminal send failure rejects separately from an ACK timeout', async () =>
   assert.equal(manager.deliveryWaiters.size, 0);
 });
 
-test('congested terminal send uses its own configurable timeout', async () => {
+test('congested terminal timeout runs sender failure cleanup exactly once', async () => {
   const manager = createManager({
     deliveryAckTimeout: 1000,
-    deliveryTerminalSendTimeout: 5
+    deliveryTerminalSendTimeout: 20,
+    deliveryAckRetryInterval: 5
   });
   const file = createFile([], 'empty.bin');
   const transferId = 'terminal-send-timeout';
+  let failureCallbacks = 0;
+  let wakeLockHeld = true;
+  let uiState = 'sending';
+  let callbackTerminalState = null;
   let channel;
   channel = new FakeDataChannel((data) => {
     if (typeof data !== 'string') return;
@@ -312,13 +317,43 @@ test('congested terminal send uses its own configurable timeout', async () => {
       })));
     }
   });
+  manager.reportTransferError = WebRTCManager.prototype.reportTransferError.bind(manager);
+  manager.onTransferError = () => {
+    failureCallbacks += 1;
+    callbackTerminalState = manager.activeSendTransfer?.terminalState || null;
+    wakeLockHeld = false;
+    uiState = 'ready';
+  };
   manager.setDataChannel(channel);
+  const promise = manager.sendFile(file, { transferId });
 
+  for (let attempt = 0; attempt < 50 && !manager.deliveryWaiters.has(transferId); attempt += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  const waiter = manager.deliveryWaiters.get(transferId);
+  assert.ok(waiter);
   await assert.rejects(
-    manager.sendFile(file, { transferId }),
+    promise,
     { code: 'DELIVERY_TERMINAL_SEND_TIMEOUT' }
   );
+  assert.equal(failureCallbacks, 1);
+  assert.equal(callbackTerminalState, 'failed');
+  assert.equal(wakeLockHeld, false);
+  assert.equal(uiState, 'ready');
+  assert.equal(waiter.settled, true);
+  assert.equal(waiter.timeout, null);
+  assert.equal(waiter.retryTimeout, null);
+  assert.equal(waiter.retryAbortController.signal.aborted, true);
   assert.equal(manager.deliveryWaiters.size, 0);
+  assert.equal(manager.activeSendTransfer, null);
+  assert.equal(controlMessages(channel, 'transfer-finished').length, 0);
+
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  channel.close();
+  if (channel.onerror) channel.onerror(new Error('late synthetic channel error'));
+  assert.equal(failureCallbacks, 1);
+  assert.equal(manager.deliveryWaiters.size, 0);
+  assert.equal(manager.activeSendTransfer, null);
 });
 
 test('sender retries transfer-finished when the first delivery ACK is lost', async () => {
