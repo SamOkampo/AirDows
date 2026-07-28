@@ -62,6 +62,10 @@ class WebRTCManager {
     this.dataChannelGeneration = 0;
     this.peerConnectionGeneration = 0;
     this.recoveryPrepared = false;
+    this.negotiationActive = false;
+    this.restartRequestCounter = 0;
+    this.handledRestartRequests = new Set();
+    this.MAX_HANDLED_RESTART_REQUESTS = 64;
     this.encryption = this.createEncryptionState();
     this.relayBudget = { plan: 'free', limitBytes: Number.POSITIVE_INFINITY, usedBytes: 0, blocked: false };
     this.pendingRelayUsageBytes = 0;
@@ -228,6 +232,7 @@ class WebRTCManager {
 
       terminalEventHandled = true;
       this.dataChannelGeneration += 1;
+      this.negotiationActive = false;
       console.log(logMessage);
       this.rejectAllDeliveryWaiters(code, message);
       this.stopNetworkDiagnostics();
@@ -244,6 +249,7 @@ class WebRTCManager {
     this.dataChannel.onopen = () => {
       if (this.dataChannel !== channel || this.dataChannelGeneration !== channelGeneration) return;
       console.log('Data channel state is: OPEN');
+      this.negotiationActive = false;
       if (this.onConnectionStateChange) {
         this.onConnectionStateChange('connected');
       }
@@ -429,10 +435,13 @@ class WebRTCManager {
     );
 
     try {
-      if (data.type === 'crypto-key') {
+      if (data.type === 'restart-request') {
+        this.handleRestartRequest(data);
+      } else if (data.type === 'crypto-key') {
         await this.acceptRemoteCryptoKey(data.publicKey, isCurrentConnection);
         if (!isCurrentConnection()) return;
       } else if (data.type === 'offer') {
+        this.negotiationActive = true;
         console.log('Received SDP Offer, creating Answer...');
         await peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
         if (!isCurrentConnection()) return;
@@ -501,6 +510,7 @@ class WebRTCManager {
     const peerConnection = this.peerConnection;
     const generation = this.peerConnectionGeneration;
     if (!peerConnection) return;
+    this.negotiationActive = true;
     try {
       console.log('Creating SDP Offer...');
       const offer = await peerConnection.createOffer();
@@ -515,6 +525,41 @@ class WebRTCManager {
     } catch (err) {
       console.error('Error creating SDP Offer:', err);
     }
+  }
+
+  isValidRestartRequest(message) {
+    return Boolean(
+      message &&
+      message.type === 'restart-request' &&
+      this.hasExactMessageFields(message, ['type', 'requestId']) &&
+      this.isValidTransferId(message.requestId)
+    );
+  }
+
+  rememberRestartRequest(requestId) {
+    this.handledRestartRequests.add(requestId);
+    while (this.handledRestartRequests.size > this.MAX_HANDLED_RESTART_REQUESTS) {
+      this.handledRestartRequests.delete(this.handledRestartRequests.values().next().value);
+    }
+  }
+
+  handleRestartRequest(message) {
+    if (this.role !== 'initiator' || !this.isValidRestartRequest(message) ||
+        this.handledRestartRequests.has(message.requestId)) return false;
+
+    this.rememberRestartRequest(message.requestId);
+    if (this.negotiationActive) return false;
+    return this.reconnect();
+  }
+
+  requestInitiatorRestart() {
+    if (this.role !== 'receiver' || !this.roomCode) return false;
+    const requestId = `restart-${this.sessionGeneration}-${++this.restartRequestCounter}`;
+    this.socketManager.sendSignal(this.roomCode, {
+      type: 'restart-request',
+      requestId
+    });
+    return true;
   }
 
   async handleIncomingMessage(data, channelGeneration = this.dataChannelGeneration) {
@@ -1582,6 +1627,9 @@ class WebRTCManager {
 
   startNewPairingSession() {
     this.sessionGeneration += 1;
+    this.negotiationActive = false;
+    this.restartRequestCounter = 0;
+    this.handledRestartRequests.clear();
     this.completedTransfers.clear();
     this.completedTransferIds.clear();
     this.rejectAllDeliveryWaiters('SESSION_REPLACED', 'The paired session was replaced.');
@@ -2105,6 +2153,7 @@ class WebRTCManager {
     console.log('Cleaning up WebRTC connections...');
     this.isClosing = true;
     this.recoveryPrepared = false;
+    this.negotiationActive = false;
     this.sessionGeneration += 1;
     this.peerConnectionGeneration += 1;
     this.dataChannelGeneration += 1;
@@ -2152,6 +2201,7 @@ class WebRTCManager {
     this.deliveryWaiters.clear();
     this.completedTransfers.clear();
     this.completedTransferIds.clear();
+    this.handledRestartRequests.clear();
     this.incomingMessageChain = Promise.resolve();
     this.encryption = this.createEncryptionState();
     this.receiverState = this.createEmptyReceiverState();
@@ -2169,12 +2219,20 @@ class WebRTCManager {
     this.isClosing = false;
     this.recoveryPrepared = false;
 
+    const hasCurrentPendingOffer = this.role === 'receiver' && this.pendingSignals.some((signal) => (
+      signal &&
+      signal.signalQueueGeneration === this.signalQueueGeneration &&
+      signal.data &&
+      signal.data.type === 'offer'
+    ));
     this.createPeerConnection();
     this.flushPendingSignals();
 
     if (this.role === 'initiator') {
       this.createDataChannel();
       this.createOffer();
+    } else if (!hasCurrentPendingOffer) {
+      this.requestInitiatorRestart();
     }
 
     return true;

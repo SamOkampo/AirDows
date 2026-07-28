@@ -416,6 +416,139 @@ test('reconnect flushes current signals before an initiator starts a new offer',
   assert.deepEqual(order, ['peer', 'flush', 'channel', 'offer']);
 });
 
+test('receiver-initiated reconnect requests one restart from the initiator', () => {
+  const signals = [];
+  const manager = new WebRTCManager({
+    sendSignal: (room, data) => signals.push({ room, data }),
+    sendRelayUsage() {}
+  });
+  manager.rtcConfig = { iceServers: [] };
+  manager.role = 'receiver';
+  manager.roomCode = '1234';
+  manager.prepareForRecovery();
+  manager.createPeerConnection = () => {
+    manager.peerConnection = {};
+  };
+  manager.flushPendingSignals = () => {};
+
+  assert.equal(manager.reconnect(), true);
+  assert.equal(signals.length, 1);
+  assert.equal(signals[0].room, '1234');
+  assert.equal(signals[0].data.type, 'restart-request');
+  assert.match(signals[0].data.requestId, /^restart-\d+-\d+$/);
+});
+
+test('initiator responds to a receiver restart request with exactly one negotiation', () => {
+  const manager = new WebRTCManager({ sendSignal() {}, sendRelayUsage() {} });
+  manager.rtcConfig = { iceServers: [] };
+  manager.role = 'initiator';
+  manager.roomCode = '1234';
+  manager.peerConnection = {};
+  let reconnects = 0;
+  manager.reconnect = () => {
+    reconnects += 1;
+    manager.negotiationActive = true;
+    return true;
+  };
+  const request = { type: 'restart-request', requestId: 'restart-1-1' };
+
+  assert.equal(manager.handleRestartRequest(request), true);
+  assert.equal(manager.handleRestartRequest(request), false);
+  assert.equal(reconnects, 1);
+  assert.equal(manager.negotiationActive, true);
+});
+
+test('simultaneous recovery does not create a second initiator offer', () => {
+  const manager = new WebRTCManager({ sendSignal() {}, sendRelayUsage() {} });
+  manager.role = 'initiator';
+  manager.roomCode = '1234';
+  manager.negotiationActive = true;
+  let reconnects = 0;
+  manager.reconnect = () => {
+    reconnects += 1;
+    return true;
+  };
+
+  assert.equal(manager.handleRestartRequest({
+    type: 'restart-request',
+    requestId: 'restart-1-simultaneous'
+  }), false);
+  assert.equal(reconnects, 0);
+});
+
+test('a queued restart request from an obsolete signal generation is discarded', async () => {
+  const manager = new WebRTCManager({ sendSignal() {}, sendRelayUsage() {} });
+  manager.role = 'initiator';
+  manager.roomCode = '1234';
+  let restartCalls = 0;
+  manager.handleRestartRequest = () => {
+    restartCalls += 1;
+    return true;
+  };
+
+  await manager.handleSignal({
+    type: 'restart-request',
+    requestId: 'restart-stale-generation'
+  });
+  assert.equal(manager.pendingSignals.length, 1);
+
+  manager.prepareForRecovery();
+  manager.peerConnection = {};
+  manager.flushPendingSignals();
+  await waitForAsyncSignals();
+
+  assert.equal(restartCalls, 0);
+});
+
+test('receiver does not request a restart when a current initiator offer is already queued', async () => {
+  const rtc = installFakeRtc();
+  const sentSignals = [];
+  const manager = new WebRTCManager({
+    sendSignal: (room, data) => sentSignals.push({ room, data }),
+    sendRelayUsage() {}
+  });
+  manager.rtcConfig = { iceServers: [] };
+  manager.role = 'receiver';
+  manager.roomCode = '1234';
+
+  try {
+    manager.prepareForRecovery();
+    await manager.handleSignal({ type: 'offer', offer: { type: 'offer', sdp: 'current' } });
+    manager.reconnect();
+    await waitForAsyncSignals();
+
+    assert.equal(sentSignals.filter(({ data }) => data.type === 'restart-request').length, 0);
+    assert.equal(sentSignals.filter(({ data }) => data.type === 'answer').length, 1);
+  } finally {
+    rtc.restore();
+  }
+});
+
+test('handling a restart request replaces the previous peer before negotiating', () => {
+  const manager = new WebRTCManager({ sendSignal() {}, sendRelayUsage() {} });
+  manager.rtcConfig = { iceServers: [] };
+  manager.role = 'initiator';
+  manager.roomCode = '1234';
+  let oldPeerClosed = 0;
+  const oldPeer = { close: () => { oldPeerClosed += 1; } };
+  manager.peerConnection = oldPeer;
+  manager.createPeerConnection = () => {
+    manager.peerConnection = { replacement: true };
+  };
+  manager.createDataChannel = () => {};
+  manager.createOffer = () => {
+    manager.negotiationActive = true;
+  };
+
+  assert.equal(manager.handleRestartRequest({
+    type: 'restart-request',
+    requestId: 'restart-replace-peer'
+  }), true);
+  assert.equal(oldPeerClosed, 1);
+  assert.equal(manager.peerConnection.replacement, true);
+  assert.equal(manager.negotiationActive, true);
+});
+
 test('generate while Socket.IO is disconnected retains recovery until reconnect', () => {
   const context = createSocketManager();
   try {
