@@ -319,6 +319,309 @@ function waitForAsyncSignals() {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
+function createNegotiationDeadlineHarness() {
+  const timers = new Map();
+  const cleared = [];
+  let nextTimer = 0;
+  const manager = new WebRTCManager(
+    { sendSignal() {}, sendRelayUsage() {} },
+    {
+      negotiationTimeout: 25,
+      setTimeoutFn(callback, delay) {
+        const timer = { id: ++nextTimer, callback, delay };
+        timers.set(timer.id, timer);
+        return timer;
+      },
+      clearTimeoutFn(timer) {
+        cleared.push(timer.id);
+        timers.delete(timer.id);
+      }
+    }
+  );
+  return { manager, timers, cleared };
+}
+
+function startNegotiationAttempt(manager, connectionState = 'new') {
+  const peer = {
+    connectionState,
+    closed: 0,
+    close() {
+      this.closed += 1;
+    }
+  };
+  manager.peerConnection = peer;
+  const generation = ++manager.peerConnectionGeneration;
+  manager.negotiationActive = true;
+  manager.armNegotiationDeadline(peer, generation);
+  return { peer, generation, timer: manager.negotiationTimer };
+}
+
+function createNegotiationRuntimeHarness(channelState = 'connecting') {
+  const previousPeerConnection = global.RTCPeerConnection;
+  const { manager, timers, cleared } = createNegotiationDeadlineHarness();
+  const peers = [];
+
+  class DeadlinePeerConnection {
+    constructor() {
+      this.connectionState = 'new';
+      this.iceConnectionState = 'new';
+      this.closed = 0;
+      peers.push(this);
+    }
+
+    close() {
+      this.closed += 1;
+      this.connectionState = 'closed';
+    }
+  }
+
+  const channel = {
+    readyState: channelState,
+    bufferedAmountLowThreshold: 0,
+    binaryType: null,
+    closeCalls: 0,
+    close() {
+      this.closeCalls += 1;
+      this.readyState = 'closed';
+      this.onclose?.();
+    },
+    open() {
+      this.readyState = 'open';
+      return this.onopen?.();
+    }
+  };
+
+  global.RTCPeerConnection = DeadlinePeerConnection;
+  manager.rtcConfig = { iceServers: [] };
+  manager.createPeerConnection();
+
+  return {
+    manager,
+    timers,
+    cleared,
+    peers,
+    peer: manager.peerConnection,
+    channel,
+    timer: manager.negotiationTimer,
+    attachChannel() {
+      manager.setDataChannel(channel);
+      return channel;
+    },
+    restore() {
+      global.RTCPeerConnection = previousPeerConnection;
+    }
+  };
+}
+
+for (const frozenState of ['new', 'connecting']) {
+  test(`WebRTC negotiation deadline retires a peer frozen in ${frozenState}`, () => {
+    const { manager } = createNegotiationDeadlineHarness();
+    const failures = [];
+    manager.onConnectionStateChange = (state, details) => failures.push({ state, details });
+    const { peer, timer } = startNegotiationAttempt(manager, frozenState);
+
+    timer.callback();
+
+    assert.equal(peer.closed, 1);
+    assert.equal(manager.peerConnection, null);
+    assert.equal(manager.negotiationTimer, null);
+    assert.equal(manager.negotiationActive, false);
+    assert.deepEqual(failures, [{
+      state: 'failed',
+      details: { code: 'WEBRTC_NEGOTIATION_TIMEOUT' }
+    }]);
+  });
+}
+
+test('clearing the current negotiation deadline invalidates its captured timeout', () => {
+  const { manager, timers } = createNegotiationDeadlineHarness();
+  let failures = 0;
+  manager.onConnectionStateChange = () => { failures += 1; };
+  const { generation, timer } = startNegotiationAttempt(manager);
+
+  assert.equal(manager.clearNegotiationDeadline(generation), true);
+  timer.callback();
+
+  assert.equal(timers.size, 0);
+  assert.equal(failures, 0);
+  assert.notEqual(manager.peerConnection, null);
+});
+
+test('connected peer with a connecting DataChannel still reaches the negotiation deadline', () => {
+  const harness = createNegotiationRuntimeHarness();
+  const states = [];
+  harness.manager.onConnectionStateChange = (state, details) => states.push({ state, details });
+  harness.attachChannel();
+
+  harness.peer.connectionState = 'connected';
+  harness.peer.onconnectionstatechange();
+
+  assert.equal(harness.manager.negotiationTimer, harness.timer);
+  assert.deepEqual(states, []);
+  harness.timer.callback();
+
+  assert.equal(harness.peer.closed, 1);
+  assert.equal(harness.channel.closeCalls, 1);
+  assert.equal(harness.manager.peerConnection, null);
+  assert.deepEqual(states, [{
+    state: 'failed',
+    details: { code: 'WEBRTC_NEGOTIATION_TIMEOUT' }
+  }]);
+  harness.restore();
+});
+
+test('DataChannel open after peer connection cancels the current deadline', () => {
+  const harness = createNegotiationRuntimeHarness();
+  const states = [];
+  harness.manager.onConnectionStateChange = (state) => states.push(state);
+  harness.attachChannel();
+
+  harness.peer.connectionState = 'connected';
+  harness.peer.onconnectionstatechange();
+  assert.equal(harness.manager.negotiationTimer, harness.timer);
+
+  assert.equal(harness.channel.open(), true);
+  assert.equal(harness.manager.negotiationTimer, null);
+  assert.equal(harness.manager.negotiationActive, false);
+  harness.timer.callback();
+
+  assert.equal(harness.peer.closed, 0);
+  assert.deepEqual(states, ['connected']);
+  harness.restore();
+});
+
+test('a DataChannel that opens immediately completes negotiation once', () => {
+  const harness = createNegotiationRuntimeHarness();
+  const states = [];
+  harness.manager.onConnectionStateChange = (state) => states.push(state);
+
+  harness.attachChannel();
+  assert.equal(harness.channel.open(), true);
+
+  assert.equal(harness.manager.negotiationTimer, null);
+  assert.equal(harness.manager.negotiationActive, false);
+  assert.deepEqual(states, ['connected']);
+  assert.equal(harness.channel.onopen(), false);
+  assert.deepEqual(states, ['connected']);
+  harness.restore();
+});
+
+test('late open from a replaced channel cannot cancel the new generation deadline', () => {
+  const first = createNegotiationRuntimeHarness();
+  first.attachChannel();
+  const oldOpen = first.channel.onopen;
+
+  first.manager.createPeerConnection();
+  const replacementPeer = first.manager.peerConnection;
+  const replacementTimer = first.manager.negotiationTimer;
+  const replacementChannel = {
+    readyState: 'connecting',
+    bufferedAmountLowThreshold: 0,
+    close() {},
+    open() {
+      this.readyState = 'open';
+      return this.onopen?.();
+    }
+  };
+  first.manager.setDataChannel(replacementChannel);
+
+  first.channel.readyState = 'open';
+  assert.equal(oldOpen(), false);
+  assert.equal(first.manager.peerConnection, replacementPeer);
+  assert.equal(first.manager.negotiationTimer, replacementTimer);
+
+  assert.equal(replacementChannel.open(), true);
+  assert.equal(first.manager.negotiationTimer, null);
+  first.restore();
+});
+
+test('obsolete timeout after a new peer and channel cannot terminate the replacement', () => {
+  const harness = createNegotiationRuntimeHarness();
+  harness.attachChannel();
+  const oldTimer = harness.timer;
+
+  harness.manager.createPeerConnection();
+  const replacementPeer = harness.manager.peerConnection;
+  const replacementTimer = harness.manager.negotiationTimer;
+  oldTimer.callback();
+
+  assert.equal(harness.manager.peerConnection, replacementPeer);
+  assert.equal(harness.manager.negotiationTimer, replacementTimer);
+  assert.equal(replacementPeer.closed, 0);
+  harness.restore();
+});
+
+test('DataChannel negotiation timeout performs cleanup and recovery exactly once', () => {
+  const harness = createNegotiationRuntimeHarness();
+  const failures = [];
+  let deliveryRejections = 0;
+  let resumeRejections = 0;
+  harness.manager.onConnectionStateChange = (state, details) => failures.push({ state, details });
+  harness.manager.rejectAllDeliveryWaiters = () => {
+    deliveryRejections += 1;
+  };
+  harness.manager.rejectAllResumeWaiters = () => {
+    resumeRejections += 1;
+  };
+  harness.attachChannel();
+
+  harness.peer.connectionState = 'connected';
+  harness.peer.onconnectionstatechange();
+  harness.timer.callback();
+  harness.timer.callback();
+  harness.channel.onclose?.();
+
+  assert.equal(harness.peer.closed, 1);
+  assert.equal(deliveryRejections, 1);
+  assert.equal(resumeRejections, 1);
+  assert.deepEqual(failures, [{
+    state: 'failed',
+    details: { code: 'WEBRTC_NEGOTIATION_TIMEOUT' }
+  }]);
+  harness.restore();
+});
+
+test('replacement negotiation invalidates a captured timeout from the previous peer', () => {
+  const { manager } = createNegotiationDeadlineHarness();
+  let failures = 0;
+  manager.onConnectionStateChange = () => { failures += 1; };
+  const first = startNegotiationAttempt(manager);
+  const second = startNegotiationAttempt(manager, 'connecting');
+
+  first.timer.callback();
+
+  assert.equal(first.peer.closed, 0);
+  assert.equal(manager.peerConnection, second.peer);
+  assert.equal(manager.negotiationTimer, second.timer);
+  assert.equal(failures, 0);
+});
+
+test('late duplicate negotiation timeout performs cleanup and notification once', () => {
+  const { manager } = createNegotiationDeadlineHarness();
+  let failures = 0;
+  manager.onConnectionStateChange = () => { failures += 1; };
+  const { peer, timer } = startNegotiationAttempt(manager);
+
+  timer.callback();
+  timer.callback();
+
+  assert.equal(peer.closed, 1);
+  assert.equal(failures, 1);
+});
+
+test('negotiation timeout feeds the bounded application reconnect path', () => {
+  const appSource = fs.readFileSync(path.join(ROOT, 'public/js/app.js'), 'utf8');
+
+  assert.match(
+    appSource,
+    /state === 'failed'[\s\S]{0,250}scheduleReconnect\(\)/
+  );
+  assert.match(
+    appSource,
+    /reconnectAttempts >= maxReconnectAttempts[\s\S]{0,200}resetApp\(\)/
+  );
+});
+
 test('a recovered offer queued before reconnect creates an answer on the replacement peer', async () => {
   const rtc = installFakeRtc();
   const sentSignals = [];
@@ -342,7 +645,7 @@ test('a recovered offer queued before reconnect creates an answer on the replace
     assert.equal(rtc.peers.length, 1);
     assert.equal(rtc.peers[0].remoteDescription.sdp, 'recovered');
     assert.equal(rtc.peers[0].answers, 1);
-    assert.deepEqual(sentSignals, [{
+    assert.deepEqual(sentSignals.filter(({ data }) => data.type === 'answer'), [{
       room: '1234',
       data: { type: 'answer', answer: { type: 'answer', sdp: 'answer' } }
     }]);
@@ -414,6 +717,139 @@ test('reconnect flushes current signals before an initiator starts a new offer',
 
   assert.equal(manager.reconnect(), true);
   assert.deepEqual(order, ['peer', 'flush', 'channel', 'offer']);
+});
+
+test('receiver-initiated reconnect requests one restart from the initiator', () => {
+  const signals = [];
+  const manager = new WebRTCManager({
+    sendSignal: (room, data) => signals.push({ room, data }),
+    sendRelayUsage() {}
+  });
+  manager.rtcConfig = { iceServers: [] };
+  manager.role = 'receiver';
+  manager.roomCode = '1234';
+  manager.prepareForRecovery();
+  manager.createPeerConnection = () => {
+    manager.peerConnection = {};
+  };
+  manager.flushPendingSignals = () => {};
+
+  assert.equal(manager.reconnect(), true);
+  assert.equal(signals.length, 1);
+  assert.equal(signals[0].room, '1234');
+  assert.equal(signals[0].data.type, 'restart-request');
+  assert.match(signals[0].data.requestId, /^restart-\d+-\d+$/);
+});
+
+test('initiator responds to a receiver restart request with exactly one negotiation', () => {
+  const manager = new WebRTCManager({ sendSignal() {}, sendRelayUsage() {} });
+  manager.rtcConfig = { iceServers: [] };
+  manager.role = 'initiator';
+  manager.roomCode = '1234';
+  manager.peerConnection = {};
+  let reconnects = 0;
+  manager.reconnect = () => {
+    reconnects += 1;
+    manager.negotiationActive = true;
+    return true;
+  };
+  const request = { type: 'restart-request', requestId: 'restart-1-1' };
+
+  assert.equal(manager.handleRestartRequest(request), true);
+  assert.equal(manager.handleRestartRequest(request), false);
+  assert.equal(reconnects, 1);
+  assert.equal(manager.negotiationActive, true);
+});
+
+test('simultaneous recovery does not create a second initiator offer', () => {
+  const manager = new WebRTCManager({ sendSignal() {}, sendRelayUsage() {} });
+  manager.role = 'initiator';
+  manager.roomCode = '1234';
+  manager.negotiationActive = true;
+  let reconnects = 0;
+  manager.reconnect = () => {
+    reconnects += 1;
+    return true;
+  };
+
+  assert.equal(manager.handleRestartRequest({
+    type: 'restart-request',
+    requestId: 'restart-1-simultaneous'
+  }), false);
+  assert.equal(reconnects, 0);
+});
+
+test('a queued restart request from an obsolete signal generation is discarded', async () => {
+  const manager = new WebRTCManager({ sendSignal() {}, sendRelayUsage() {} });
+  manager.role = 'initiator';
+  manager.roomCode = '1234';
+  let restartCalls = 0;
+  manager.handleRestartRequest = () => {
+    restartCalls += 1;
+    return true;
+  };
+
+  await manager.handleSignal({
+    type: 'restart-request',
+    requestId: 'restart-stale-generation'
+  });
+  assert.equal(manager.pendingSignals.length, 1);
+
+  manager.prepareForRecovery();
+  manager.peerConnection = {};
+  manager.flushPendingSignals();
+  await waitForAsyncSignals();
+
+  assert.equal(restartCalls, 0);
+});
+
+test('receiver does not request a restart when a current initiator offer is already queued', async () => {
+  const rtc = installFakeRtc();
+  const sentSignals = [];
+  const manager = new WebRTCManager({
+    sendSignal: (room, data) => sentSignals.push({ room, data }),
+    sendRelayUsage() {}
+  });
+  manager.rtcConfig = { iceServers: [] };
+  manager.role = 'receiver';
+  manager.roomCode = '1234';
+
+  try {
+    manager.prepareForRecovery();
+    await manager.handleSignal({ type: 'offer', offer: { type: 'offer', sdp: 'current' } });
+    manager.reconnect();
+    await waitForAsyncSignals();
+
+    assert.equal(sentSignals.filter(({ data }) => data.type === 'restart-request').length, 0);
+    assert.equal(sentSignals.filter(({ data }) => data.type === 'answer').length, 1);
+  } finally {
+    rtc.restore();
+  }
+});
+
+test('handling a restart request replaces the previous peer before negotiating', () => {
+  const manager = new WebRTCManager({ sendSignal() {}, sendRelayUsage() {} });
+  manager.rtcConfig = { iceServers: [] };
+  manager.role = 'initiator';
+  manager.roomCode = '1234';
+  let oldPeerClosed = 0;
+  const oldPeer = { close: () => { oldPeerClosed += 1; } };
+  manager.peerConnection = oldPeer;
+  manager.createPeerConnection = () => {
+    manager.peerConnection = { replacement: true };
+  };
+  manager.createDataChannel = () => {};
+  manager.createOffer = () => {
+    manager.negotiationActive = true;
+  };
+
+  assert.equal(manager.handleRestartRequest({
+    type: 'restart-request',
+    requestId: 'restart-replace-peer'
+  }), true);
+  assert.equal(oldPeerClosed, 1);
+  assert.equal(manager.peerConnection.replacement, true);
+  assert.equal(manager.negotiationActive, true);
 });
 
 test('generate while Socket.IO is disconnected retains recovery until reconnect', () => {
