@@ -363,9 +363,6 @@ class WebRTCManager {
       );
       if (!handled) return;
       console.error('Data channel error:', error);
-      this.cleanupReceiverDiskStream().catch((err) => {
-        console.error('Error cleaning receiver stream after data channel error:', err);
-      });
     };
 
     this.dataChannel.onmessage = (event) => {
@@ -830,7 +827,14 @@ class WebRTCManager {
       throw error;
     }
 
-    if (state.writeMode === 'disk' && state.writable) {
+    if (state.writeMode === 'disk') {
+      if (!state.writable) {
+        state.writeFailed = true;
+        const writeError = new Error('The received disk stream is unavailable.');
+        writeError.code = 'RECEIVER_WRITE_FAILED';
+        writeError.deliveryReason = 'WRITE_FAILED';
+        throw writeError;
+      }
       try {
         state.writeChain = state.writeChain.then(() => state.writable.write(chunkData));
         await state.writeChain;
@@ -1301,35 +1305,21 @@ class WebRTCManager {
   }
 
   async cleanupReceiverDiskStream() {
-    const state = this.receiverState;
-    if (!state || !state.writable) return;
-
-    try {
-      await state.writeChain.catch(() => {});
-      await state.writable.close();
-    } catch (err) {
-      try {
-        await state.writable.abort();
-      } catch (abortErr) {}
-    } finally {
-      state.writable = null;
-      state.fileHandle = null;
-    }
+    return this.abortReceiverDiskStream(this.receiverState);
   }
 
-  async abortReceiverDiskStream() {
-    const state = this.receiverState;
+  async abortReceiverDiskStream(state = this.receiverState) {
     if (!state || !state.writable) return;
+    const writable = state.writable;
+    state.writable = null;
+    state.fileHandle = null;
 
     try {
       await state.writeChain.catch(() => {});
-      await state.writable.abort();
+      await writable.abort();
     } catch (err) {
       console.error('Error aborting receiver disk stream:', err);
       this.reportTransferError('disk-abort', err, state.metadata && state.metadata.name);
-    } finally {
-      state.writable = null;
-      state.fileHandle = null;
     }
   }
 

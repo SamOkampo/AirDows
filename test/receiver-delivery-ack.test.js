@@ -630,7 +630,6 @@ test('throwing disconnection callback cannot interrupt terminal cleanup or waite
   const rejectionCodes = [];
   let notifications = 0;
   let diagnosticsStops = 0;
-  let receiverCleanups = 0;
   const rejectAllDeliveryWaiters = manager.rejectAllDeliveryWaiters.bind(manager);
   manager.onConnectionStateChange = () => {
     notifications += 1;
@@ -638,9 +637,6 @@ test('throwing disconnection callback cannot interrupt terminal cleanup or waite
   };
   manager.stopNetworkDiagnostics = () => {
     diagnosticsStops += 1;
-  };
-  manager.cleanupReceiverDiskStream = async () => {
-    receiverCleanups += 1;
   };
   manager.rejectAllDeliveryWaiters = (code, message) => {
     rejectionCodes.push(code);
@@ -655,7 +651,6 @@ test('throwing disconnection callback cannot interrupt terminal cleanup or waite
   await assert.rejects(waiter, { code: 'DATA_CHANNEL_ERROR' });
   assert.equal(notifications, 1);
   assert.equal(diagnosticsStops, 1);
-  assert.equal(receiverCleanups, 1);
   assert.deepEqual(rejectionCodes, ['DATA_CHANNEL_ERROR']);
   assert.equal(manager.deliveryWaiters.size, 0);
 });
@@ -821,10 +816,12 @@ test('missing disk writable sends transfer-failed and no ACK', async () => {
 });
 
 test('disk write failure sends transfer-failed and no ACK', async () => {
+  let aborts = 0;
+  let closes = 0;
   const writable = {
     write: async () => { throw new Error('write failed'); },
-    close: async () => {},
-    abort: async () => {}
+    close: async () => { closes += 1; },
+    abort: async () => { aborts += 1; }
   };
   const { manager, channel, state } = prepareReceiver({
     size: 1,
@@ -835,6 +832,116 @@ test('disk write failure sends transfer-failed and no ACK', async () => {
   });
   await manager.enqueueIncomingMessage(Uint8Array.from([1]).buffer);
   assert.equal(state.writeFailed, true);
+  assert.equal(aborts, 1);
+  assert.equal(closes, 0);
+  assert.equal(controlMessages(channel, 'transfer-ack').length, 0);
+  assert.equal(controlMessages(channel, 'transfer-failed')[0].reason, 'WRITE_FAILED');
+});
+
+test('receiver cancellation aborts an incomplete disk file instead of closing it', async () => {
+  let aborts = 0;
+  let closes = 0;
+  const writable = {
+    close: async () => { closes += 1; },
+    abort: async () => { aborts += 1; }
+  };
+  const { manager, channel, transferId } = prepareReceiver({
+    size: 3,
+    receivedSize: 1,
+    writeMode: 'disk',
+    writable
+  });
+
+  await manager.handleIncomingTextMessage(JSON.stringify({
+    type: 'transfer-cancelled',
+    transferId
+  }));
+
+  assert.equal(aborts, 1);
+  assert.equal(closes, 0);
+  assert.equal(controlMessages(channel, 'transfer-ack').length, 0);
+  assert.equal(controlMessages(channel, 'transfer-failed')[0].reason, 'CANCELLED');
+  assert.equal(manager.receiverState.metadata, null);
+});
+
+test('recoverable DataChannel failure preserves the partial disk writable', () => {
+  let aborts = 0;
+  let closes = 0;
+  const writable = {
+    seek: async () => {},
+    close: async () => { closes += 1; },
+    abort: async () => { aborts += 1; }
+  };
+  const { manager, channel, state } = prepareReceiver({
+    size: 3,
+    receivedSize: 1,
+    writeMode: 'disk',
+    writable
+  });
+
+  channel.onerror(new Error('recoverable transport failure'));
+  manager.prepareForRecovery();
+
+  assert.equal(manager.receiverState, state);
+  assert.equal(state.writable, writable);
+  assert.equal(aborts, 0);
+  assert.equal(closes, 0);
+});
+
+test('definitive receiver cleanup aborts once and clears disk references', async () => {
+  let aborts = 0;
+  let closes = 0;
+  const writable = {
+    close: async () => { closes += 1; },
+    abort: async () => { aborts += 1; }
+  };
+  const { manager, state } = prepareReceiver({
+    size: 3,
+    receivedSize: 1,
+    writeMode: 'disk',
+    writable
+  });
+
+  await manager.cleanupReceiverDiskStream();
+  await manager.cleanupReceiverDiskStream();
+
+  assert.equal(aborts, 1);
+  assert.equal(closes, 0);
+  assert.equal(state.writable, null);
+  assert.equal(state.fileHandle, null);
+});
+
+test('exact disk finalization closes without aborting the completed file', async () => {
+  let aborts = 0;
+  let closes = 0;
+  const writable = {
+    close: async () => { closes += 1; },
+    abort: async () => { aborts += 1; }
+  };
+  const { manager, channel, transferId, size } = prepareReceiver({
+    writeMode: 'disk',
+    writable
+  });
+
+  await sendFinished(manager, transferId, size);
+
+  assert.equal(closes, 1);
+  assert.equal(aborts, 0);
+  assert.equal(controlMessages(channel, 'transfer-ack').length, 1);
+});
+
+test('disk mode without its writable fails closed instead of buffering in memory', async () => {
+  const { manager, channel, state } = prepareReceiver({
+    size: 1,
+    receivedSize: 0,
+    receivedBuffers: [],
+    writeMode: 'disk',
+    writable: null
+  });
+
+  await manager.enqueueIncomingMessage(Uint8Array.from([1]).buffer);
+
+  assert.equal(state.receivedBuffers.length, 0);
   assert.equal(controlMessages(channel, 'transfer-ack').length, 0);
   assert.equal(controlMessages(channel, 'transfer-failed')[0].reason, 'WRITE_FAILED');
 });
