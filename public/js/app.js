@@ -88,6 +88,11 @@ function createReceivedBlobUrlLifecycle(downloadLink, urlApi) {
   });
 }
 
+function clearReceivedBlobUrlOnPageHide(event, receivedBlobUrls) {
+  if (event.persisted === true) return false;
+  return receivedBlobUrls.clear();
+}
+
 function isAutomaticReconnectAllowed(sessionState) {
   return sessionState !== 'signaling-disconnected' &&
     sessionState !== 'recovering' &&
@@ -1506,8 +1511,8 @@ document.addEventListener('DOMContentLoaded', () => {
     socketManager.ensureConnected();
   });
 
-  window.addEventListener('pagehide', () => {
-    receivedBlobUrls.clear();
+  window.addEventListener('pagehide', (event) => {
+    clearReceivedBlobUrlOnPageHide(event, receivedBlobUrls);
   });
 
   document.addEventListener('visibilitychange', () => {

@@ -21,11 +21,18 @@ function loadLifecycleFactory() {
   const context = {};
   vm.createContext(context);
   vm.runInContext(
-    `${appSource.slice(start, end)}\nthis.factory = createReceivedBlobUrlLifecycle;`,
+    `${appSource.slice(start, end)}
+this.factory = createReceivedBlobUrlLifecycle;
+this.clearOnPageHide = clearReceivedBlobUrlOnPageHide;`,
     context
   );
-  return context.factory;
+  return {
+    factory: context.factory,
+    clearOnPageHide: context.clearOnPageHide
+  };
 }
+
+const lifecycleHelpers = loadLifecycleFactory();
 
 function createHarness() {
   const revoked = [];
@@ -50,7 +57,7 @@ function createHarness() {
       revoked.push(url);
     }
   };
-  const lifecycle = loadLifecycleFactory()(link, urlApi);
+  const lifecycle = lifecycleHelpers.factory(link, urlApi);
   return { lifecycle, link, created, revoked };
 }
 
@@ -117,9 +124,60 @@ test('direct-to-disk completion cannot retain a previous Blob URL', () => {
   assert.match(appSource, /if \(options\.savedToDisk\) \{\s*receivedBlobUrls\.clear\(\);/);
 });
 
-test('cancellation, failure, manual reset, and pagehide use centralized cleanup', () => {
+test('cancellation, failure, and manual reset use centralized cleanup', () => {
   assert.match(appSource, /webrtcManager\.onTransferError = \([^)]*\) => \{\s*receivedBlobUrls\.clear\(\);/);
   assert.match(appSource, /webrtcManager\.onFileTransferCancelled = \([^)]*\) => \{\s*receivedBlobUrls\.clear\(\);/);
   assert.match(appSource, /btnResetTransfer\.addEventListener\('click', \(\) => \{[\s\S]{0,250}receivedBlobUrls\.clear\(\);/);
-  assert.match(appSource, /window\.addEventListener\('pagehide', \(\) => \{\s*receivedBlobUrls\.clear\(\);/);
+});
+
+test('pagehide persisted in bfcache preserves the active received URL', () => {
+  const { lifecycle, revoked, link } = createHarness();
+  const url = lifecycle.install({}, 'received.bin');
+
+  const cleared = lifecycleHelpers.clearOnPageHide({ persisted: true }, lifecycle);
+
+  assert.equal(cleared, false);
+  assert.deepEqual(revoked, []);
+  assert.equal(lifecycle.getActiveUrl(), url);
+  assert.equal(link.href, url);
+});
+
+test('pagehide outside bfcache revokes the active received URL', () => {
+  const { lifecycle, revoked, link } = createHarness();
+  const url = lifecycle.install({}, 'received.bin');
+
+  const cleared = lifecycleHelpers.clearOnPageHide({ persisted: false }, lifecycle);
+
+  assert.equal(cleared, true);
+  assert.deepEqual(revoked, [url]);
+  assert.equal(lifecycle.getActiveUrl(), null);
+  assert.equal(link.href, '#');
+  assert.match(
+    appSource,
+    /window\.addEventListener\('pagehide', \(event\) => \{\s*clearReceivedBlobUrlOnPageHide\(event, receivedBlobUrls\);/
+  );
+});
+
+test('pageshow after bfcache restoration keeps the download link usable', () => {
+  const { lifecycle, revoked, link } = createHarness();
+  const url = lifecycle.install({}, 'received.bin');
+
+  lifecycleHelpers.clearOnPageHide({ persisted: true }, lifecycle);
+  const pageshowEvent = { persisted: true };
+
+  assert.equal(pageshowEvent.persisted, true);
+  assert.deepEqual(revoked, []);
+  assert.equal(lifecycle.getActiveUrl(), url);
+  assert.equal(link.href, url);
+  assert.equal(link.attributes.get('download'), 'received.bin');
+});
+
+test('cleanup after bfcache restoration remains idempotent', () => {
+  const { lifecycle, revoked } = createHarness();
+  const url = lifecycle.install({}, 'received.bin');
+  lifecycleHelpers.clearOnPageHide({ persisted: true }, lifecycle);
+
+  assert.equal(lifecycle.clear(), true);
+  assert.equal(lifecycle.clear(), false);
+  assert.deepEqual(revoked, [url]);
 });
