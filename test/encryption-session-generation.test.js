@@ -3,6 +3,12 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const WebRTCManager = require('../public/js/webrtc-manager');
+const VALID_PUBLIC_JWK = {
+  kty: 'EC',
+  crv: 'P-256',
+  x: 'public-x',
+  y: 'public-y'
+};
 
 function deferred() {
   let resolve;
@@ -95,7 +101,7 @@ test('a late remote-key import cannot populate a new encryption generation', asy
   }, async () => {
     const { manager } = createManager();
     const staleState = manager.encryption;
-    const accepting = manager.acceptRemoteCryptoKey({ kty: 'EC' });
+    const accepting = manager.acceptRemoteCryptoKey(VALID_PUBLIC_JWK);
 
     manager.startNewPairingSession();
     imported.resolve({ id: 'stale-remote-key' });
@@ -195,4 +201,109 @@ test('two consecutive pairing sessions generate isolated key pairs', async () =>
     assert.equal(manager.encryption.keyPair.privateKey.id, 'private-2');
     assert.equal(signals.length, 2);
   });
+});
+
+test('recovery retransmits a local public key when the remote key was never received', async () => {
+  await withCrypto({
+    subtle: {
+      generateKey: async () => ({
+        privateKey: { id: 'private' },
+        publicKey: { id: 'public' }
+      }),
+      exportKey: async () => VALID_PUBLIC_JWK
+    }
+  }, async () => {
+    const { manager, signals } = createManager();
+    manager.peerConnectionGeneration = 1;
+    await manager.startEncryptionSession();
+    assert.equal(signals.length, 1);
+    assert.equal(manager.encryption.remotePublicKey, null);
+
+    manager.peerConnectionGeneration = 2;
+    assert.equal(manager.resumeEncryptionHandshake(), true);
+    await Promise.resolve();
+
+    assert.equal(signals.length, 2);
+    assert.deepEqual(signals[1][1], {
+      type: 'crypto-key',
+      publicKey: VALID_PUBLIC_JWK
+    });
+  });
+});
+
+test('duplicate recovery hooks retransmit the public key only once per peer generation', async () => {
+  await withCrypto({
+    subtle: {
+      generateKey: async () => ({
+        privateKey: { id: 'private' },
+        publicKey: { id: 'public' }
+      }),
+      exportKey: async () => VALID_PUBLIC_JWK
+    }
+  }, async () => {
+    const { manager, signals } = createManager();
+    manager.peerConnectionGeneration = 4;
+    await manager.startEncryptionSession();
+    manager.peerConnectionGeneration = 5;
+
+    manager.resumeEncryptionHandshake();
+    manager.resumeEncryptionHandshake();
+    await Promise.resolve();
+
+    assert.equal(signals.length, 2);
+    assert.equal(manager.encryption.lastPublicKeySignalGeneration, 5);
+  });
+});
+
+test('recovered encryption handshake derives one session key after retransmission', async () => {
+  let derives = 0;
+  await withCrypto({
+    subtle: {
+      generateKey: async () => ({
+        privateKey: { id: 'private' },
+        publicKey: { id: 'public' }
+      }),
+      exportKey: async () => VALID_PUBLIC_JWK,
+      importKey: async () => ({ id: 'remote' }),
+      deriveKey: async () => {
+        derives += 1;
+        return { id: 'session-key' };
+      }
+    }
+  }, async () => {
+    const { manager, signals } = createManager();
+    manager.peerConnectionGeneration = 1;
+    await manager.startEncryptionSession();
+    manager.peerConnectionGeneration = 2;
+    manager.resumeEncryptionHandshake();
+    await manager.acceptRemoteCryptoKey(VALID_PUBLIC_JWK);
+    await manager.acceptRemoteCryptoKey(VALID_PUBLIC_JWK);
+
+    assert.equal(signals.length, 2);
+    assert.equal(manager.encryption.sessionKey.id, 'session-key');
+    assert.equal(derives, 1);
+  });
+});
+
+test('an obsolete encryption timeout is cancelled and cannot affect a new session', async () => {
+  const timers = new Map();
+  let nextTimer = 1;
+  const { manager } = createManager();
+  manager.encryptionSetTimeout = (callback) => {
+    const id = nextTimer++;
+    timers.set(id, callback);
+    return id;
+  };
+  manager.encryptionClearTimeout = (id) => timers.delete(id);
+  manager.encryption.available = true;
+  manager.ensureEncryptionReadyPromise();
+
+  const waiting = manager.waitForEncryption();
+  const staleTimeout = timers.values().next().value;
+  manager.startNewPairingSession();
+
+  await assert.rejects(waiting, { code: 'ENCRYPTION_SESSION_REPLACED' });
+  assert.equal(timers.size, 0);
+  assert.doesNotThrow(() => staleTimeout());
+  assert.equal(manager.encryption.sessionKey, null);
 });

@@ -454,7 +454,7 @@ test('a recovered offer queued before reconnect creates an answer on the replace
     assert.equal(rtc.peers.length, 1);
     assert.equal(rtc.peers[0].remoteDescription.sdp, 'recovered');
     assert.equal(rtc.peers[0].answers, 1);
-    assert.deepEqual(sentSignals, [{
+    assert.deepEqual(sentSignals.filter(({ data }) => data.type === 'answer'), [{
       room: '1234',
       data: { type: 'answer', answer: { type: 'answer', sdp: 'answer' } }
     }]);

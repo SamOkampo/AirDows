@@ -26,6 +26,11 @@ class WebRTCManager {
       : 15000;
     this.negotiationSetTimeout = options.setTimeoutFn || setTimeout;
     this.negotiationClearTimeout = options.clearTimeoutFn || clearTimeout;
+    this.ENCRYPTION_HANDSHAKE_TIMEOUT = Number.isSafeInteger(options.encryptionHandshakeTimeout)
+      ? Math.max(1, options.encryptionHandshakeTimeout)
+      : 10000;
+    this.encryptionSetTimeout = options.encryptionSetTimeoutFn || setTimeout;
+    this.encryptionClearTimeout = options.encryptionClearTimeoutFn || clearTimeout;
     this.deliveryAckNow = typeof options.deliveryAckNow === 'function'
       ? options.deliveryAckNow
       : Date.now;
@@ -124,9 +129,13 @@ class WebRTCManager {
       available: typeof crypto !== 'undefined' && Boolean(crypto.subtle),
       keyPair: null,
       keyPairPromise: null,
+      localPublicKey: null,
+      lastPublicKeySignalGeneration: null,
       remotePublicKey: null,
+      remotePublicKeyFingerprint: null,
       sessionKey: null,
       derivePromise: null,
+      waitTimers: new Set(),
       ready: null,
       resolveReady: null,
       rejectReady: null
@@ -134,6 +143,16 @@ class WebRTCManager {
   }
 
   resetEncryptionSession() {
+    const previousState = this.encryption;
+    if (previousState && previousState.waitTimers) {
+      for (const wait of previousState.waitTimers) {
+        this.encryptionClearTimeout(wait.timer);
+        const error = new Error('The encryption session was replaced.');
+        error.code = 'ENCRYPTION_SESSION_REPLACED';
+        wait.reject(error);
+      }
+      previousState.waitTimers.clear();
+    }
     this.encryptionGeneration += 1;
     this.encryption = this.createEncryptionState();
     return this.encryption;
@@ -152,6 +171,42 @@ class WebRTCManager {
       });
     }
     return state.ready;
+  }
+
+  getCryptoPublicKeyFingerprint(publicKeyJwk) {
+    if (!publicKeyJwk || typeof publicKeyJwk !== 'object') return null;
+    const { kty, crv, x, y } = publicKeyJwk;
+    if (![kty, crv, x, y].every((value) => typeof value === 'string' && value.length > 0)) {
+      return null;
+    }
+    return JSON.stringify({ kty, crv, x, y });
+  }
+
+  sendEncryptionPublicKey(state = this.encryption) {
+    if (!this.isCurrentEncryptionState(state) || state.sessionKey || !state.localPublicKey) {
+      return false;
+    }
+    if (state.lastPublicKeySignalGeneration === this.peerConnectionGeneration) {
+      return false;
+    }
+
+    this.socketManager.sendSignal(this.roomCode, {
+      type: 'crypto-key',
+      publicKey: state.localPublicKey
+    });
+    state.lastPublicKeySignalGeneration = this.peerConnectionGeneration;
+    return true;
+  }
+
+  resumeEncryptionHandshake() {
+    const state = this.encryption;
+    if (!state.available || state.sessionKey) return false;
+    this.startEncryptionSession().catch((err) => {
+      if (this.isCurrentEncryptionState(state)) {
+        console.warn('Application encryption handshake could not resume:', err.message);
+      }
+    });
+    return true;
   }
 
   setIceConfig(config) {
@@ -379,11 +434,7 @@ class WebRTCManager {
         state.keyPair = keyPair;
         const publicKey = await crypto.subtle.exportKey('jwk', keyPair.publicKey);
         if (!this.isCurrentEncryptionState(state) || state.keyPair !== keyPair) return;
-
-        this.socketManager.sendSignal(this.roomCode, {
-          type: 'crypto-key',
-          publicKey
-        });
+        state.localPublicKey = publicKey;
       })().finally(() => {
         if (this.isCurrentEncryptionState(state)) {
           state.keyPairPromise = null;
@@ -395,12 +446,22 @@ class WebRTCManager {
       await state.keyPairPromise;
     }
     if (!this.isCurrentEncryptionState(state)) return;
+    this.sendEncryptionPublicKey(state);
     await this.deriveSessionKey(state);
   }
 
   async acceptRemoteCryptoKey(publicKeyJwk, isCurrentConnection = () => true) {
     const state = this.encryption;
     if (!state.available || !publicKeyJwk || typeof publicKeyJwk !== 'object') return;
+    const fingerprint = this.getCryptoPublicKeyFingerprint(publicKeyJwk);
+    if (!fingerprint) return;
+    if (state.remotePublicKeyFingerprint) {
+      if (state.remotePublicKeyFingerprint !== fingerprint) return;
+      await this.startEncryptionSession();
+      if (!isCurrentConnection() || !this.isCurrentEncryptionState(state)) return;
+      await this.deriveSessionKey(state);
+      return;
+    }
 
     const remotePublicKey = await crypto.subtle.importKey(
       'jwk',
@@ -410,8 +471,14 @@ class WebRTCManager {
       []
     );
     if (!isCurrentConnection() || !this.isCurrentEncryptionState(state)) return;
+    if (state.remotePublicKeyFingerprint) {
+      if (state.remotePublicKeyFingerprint !== fingerprint) return;
+      await this.startEncryptionSession();
+      return;
+    }
 
     state.remotePublicKey = remotePublicKey;
+    state.remotePublicKeyFingerprint = fingerprint;
     await this.startEncryptionSession();
     if (!isCurrentConnection() || !this.isCurrentEncryptionState(state)) return;
     await this.deriveSessionKey(state);
@@ -459,17 +526,32 @@ class WebRTCManager {
     if (!state.available) return null;
     if (state.sessionKey) return state.sessionKey;
 
+    let timeoutHandle = null;
+    let timeoutWait = null;
     const timeout = new Promise((_, reject) => {
-      setTimeout(() => reject(new Error('No se pudo negociar la clave de cifrado.')), 10000);
+      timeoutHandle = this.encryptionSetTimeout(() => {
+        state.waitTimers.delete(timeoutWait);
+        if (!this.isCurrentEncryptionState(state)) return;
+        reject(new Error('No se pudo negociar la clave de cifrado.'));
+      }, this.ENCRYPTION_HANDSHAKE_TIMEOUT);
+      timeoutWait = { timer: timeoutHandle, reject };
+      state.waitTimers.add(timeoutWait);
     });
 
-    const sessionKey = await Promise.race([this.ensureEncryptionReadyPromise(state), timeout]);
-    if (!this.isCurrentEncryptionState(state)) {
-      const error = new Error('The encryption session was replaced.');
-      error.code = 'ENCRYPTION_SESSION_REPLACED';
-      throw error;
+    try {
+      const sessionKey = await Promise.race([this.ensureEncryptionReadyPromise(state), timeout]);
+      if (!this.isCurrentEncryptionState(state)) {
+        const error = new Error('The encryption session was replaced.');
+        error.code = 'ENCRYPTION_SESSION_REPLACED';
+        throw error;
+      }
+      return sessionKey;
+    } finally {
+      if (timeoutHandle !== null) {
+        this.encryptionClearTimeout(timeoutHandle);
+        state.waitTimers.delete(timeoutWait);
+      }
     }
-    return sessionKey;
   }
 
   async encryptChunk(data) {
@@ -2381,6 +2463,7 @@ class WebRTCManager {
       signal.data.type === 'offer'
     ));
     this.createPeerConnection();
+    this.resumeEncryptionHandshake();
     this.flushPendingSignals();
 
     if (this.role === 'initiator') {
