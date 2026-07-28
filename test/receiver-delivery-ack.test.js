@@ -930,6 +930,137 @@ test('exact disk finalization closes without aborting the completed file', async
   assert.equal(controlMessages(channel, 'transfer-ack').length, 1);
 });
 
+test('disk close completion records a receipt across DataChannel recovery', async () => {
+  const closing = deferred();
+  let closes = 0;
+  let completions = 0;
+  const writable = {
+    close: async () => {
+      closes += 1;
+      await closing.promise;
+    },
+    abort: async () => {}
+  };
+  const { manager, state, transferId, size } = prepareReceiver({
+    writeMode: 'disk',
+    writable
+  });
+  manager.onFileTransferComplete = () => { completions += 1; };
+  const finalization = sendFinished(manager, transferId, size);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(state.diskCloseStarted, true);
+
+  manager.prepareForRecovery();
+  const recoveredChannel = new FakeDataChannel();
+  manager.setDataChannel(recoveredChannel);
+  closing.resolve();
+  await finalization;
+
+  const receipt = manager.completedTransfers.get(transferId);
+  assert.ok(receipt);
+  assert.equal(receipt.size, size);
+  assert.equal(receipt.writeMode, 'disk');
+  assert.equal(closes, 1);
+  assert.equal(completions, 1);
+  assert.equal(manager.receiverState.metadata, null);
+  assert.equal(controlMessages(recoveredChannel, 'transfer-ack').length, 1);
+});
+
+test('duplicate disk terminal after recovery cannot repeat completion or download', async () => {
+  let now = 1000;
+  let closes = 0;
+  let completions = 0;
+  const writable = {
+    close: async () => { closes += 1; },
+    abort: async () => {}
+  };
+  const { manager, channel, transferId, size } = prepareReceiver({
+    writeMode: 'disk',
+    writable,
+    managerOptions: {
+      deliveryAckCooldown: 100,
+      deliveryAckNow: () => now
+    }
+  });
+  manager.onFileTransferComplete = () => { completions += 1; };
+
+  await sendFinished(manager, transferId, size);
+  now += 101;
+  await sendFinished(manager, transferId, size);
+
+  assert.equal(closes, 1);
+  assert.equal(completions, 1);
+  assert.equal(manager.completedTransfers.has(transferId), true);
+  assert.equal(controlMessages(channel, 'transfer-ack').length, 2);
+});
+
+test('cancellation before disk close prevents receipt and successful completion', async () => {
+  const writes = deferred();
+  let aborts = 0;
+  let closes = 0;
+  let completions = 0;
+  const writable = {
+    close: async () => { closes += 1; },
+    abort: async () => { aborts += 1; }
+  };
+  const { manager, state, transferId, size } = prepareReceiver({
+    writeMode: 'disk',
+    writable,
+    writeChain: writes.promise
+  });
+  manager.onFileTransferComplete = () => { completions += 1; };
+  const finalization = sendFinished(manager, transferId, size);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const cancellation = manager.failIncomingTransfer('CANCELLED');
+  writes.resolve();
+  await Promise.all([finalization, cancellation]);
+
+  assert.equal(state.diskCloseStarted, false);
+  assert.equal(closes, 0);
+  assert.equal(aborts, 1);
+  assert.equal(completions, 0);
+  assert.equal(manager.completedTransfers.has(transferId), false);
+});
+
+test('a different transfer remains isolated from a disk close completing after recovery', async () => {
+  const closing = deferred();
+  const writable = {
+    close: () => closing.promise,
+    abort: async () => {}
+  };
+  const { manager, transferId, size } = prepareReceiver({
+    writeMode: 'disk',
+    writable
+  });
+  const finalization = sendFinished(manager, transferId, size);
+  await new Promise((resolve) => setImmediate(resolve));
+  manager.prepareForRecovery();
+  manager.setDataChannel(new FakeDataChannel());
+
+  await manager.handleIncomingTextMessage(JSON.stringify({
+    type: 'metadata',
+    transferId: 'different-transfer',
+    name: 'different.bin',
+    size: 0,
+    mime: 'application/octet-stream',
+    encryption: null
+  }));
+  assert.equal(manager.receiverState.metadata.transferId, transferId);
+
+  closing.resolve();
+  await finalization;
+  await manager.handleIncomingTextMessage(JSON.stringify({
+    type: 'metadata',
+    transferId: 'different-transfer',
+    name: 'different.bin',
+    size: 0,
+    mime: 'application/octet-stream',
+    encryption: null
+  }));
+  assert.equal(manager.receiverState.metadata.transferId, 'different-transfer');
+});
+
 test('disk mode without its writable fails closed instead of buffering in memory', async () => {
   const { manager, channel, state } = prepareReceiver({
     size: 1,

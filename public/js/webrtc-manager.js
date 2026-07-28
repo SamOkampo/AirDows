@@ -118,6 +118,9 @@ class WebRTCManager {
       writeFailed: false,
       memoryChunkCount: 0,
       finalizing: false,
+      finalizationPromise: null,
+      diskCloseStarted: false,
+      completionRecorded: false,
       terminalState: null,
       sessionGeneration: this.sessionGeneration
     };
@@ -409,10 +412,10 @@ class WebRTCManager {
     if (!message || message.type !== 'metadata') return false;
 
     const current = this.receiverState;
-    return current.finalizing || Boolean(current.terminalState) ||
-      current.metadata.transferId !== message.transferId ||
-      current.metadata.name !== message.name ||
-      current.metadata.size !== message.size;
+    const sameTransfer = current.metadata.transferId === message.transferId &&
+      current.metadata.name === message.name &&
+      current.metadata.size === message.size;
+    return Boolean(current.terminalState) || !sameTransfer;
   }
 
   async startEncryptionSession() {
@@ -916,8 +919,20 @@ class WebRTCManager {
         const sameTransfer = current.metadata.transferId === message.transferId &&
           current.metadata.name === message.name &&
           current.metadata.size === message.size;
-        if (!sameTransfer || current.finalizing || current.terminalState) {
+        if (!sameTransfer || current.terminalState) {
           console.warn('Ignoring unexpected file metadata while another transfer is active');
+          return;
+        }
+        if (current.finalizing) {
+          await current.finalizationPromise;
+          const finalized = this.completedTransfers.get(message.transferId);
+          if (finalized && finalized.sessionGeneration === this.sessionGeneration) {
+            this.sendReceiverReady(message.transferId, {
+              offset: finalized.size,
+              size: finalized.size,
+              writeMode: finalized.writeMode
+            });
+          }
           return;
         }
       }
@@ -985,7 +1000,10 @@ class WebRTCManager {
         return;
       }
       if (state.metadata.transferId !== message.transferId || state.terminalState) return;
-      await this.finalizeIncomingFile(message, channelGeneration);
+      if (!state.finalizationPromise) {
+        state.finalizationPromise = this.finalizeIncomingFile(message, channelGeneration);
+      }
+      await state.finalizationPromise;
       return;
     }
 
@@ -1165,6 +1183,7 @@ class WebRTCManager {
   async finalizeIncomingFile(finishedMessage, channelGeneration = this.dataChannelGeneration) {
     const state = this.receiverState;
     const metadata = state.metadata;
+    const finalizationSessionGeneration = state.sessionGeneration;
     if (!metadata || state.finalizing || state.terminalState ||
         channelGeneration !== this.dataChannelGeneration) return;
 
@@ -1191,15 +1210,37 @@ class WebRTCManager {
 
       try {
         await state.writeChain;
-        if (channelGeneration !== this.dataChannelGeneration || this.receiverState !== state) return;
+        if (this.receiverState !== state ||
+            state.sessionGeneration !== finalizationSessionGeneration ||
+            this.sessionGeneration !== finalizationSessionGeneration ||
+            state.terminalState) {
+          return;
+        }
+        if (channelGeneration !== this.dataChannelGeneration) {
+          state.finalizing = false;
+          state.finalizationPromise = null;
+          return;
+        }
         if (state.writeFailed) {
           await this.failIncomingTransfer('WRITE_FAILED');
           return;
         }
-        await state.writable.close();
+        const writable = state.writable;
         state.writable = null;
-        if (channelGeneration !== this.dataChannelGeneration || this.receiverState !== state) {
-          if (this.receiverState === state) this.receiverState = this.createEmptyReceiverState();
+        state.fileHandle = null;
+        state.diskCloseStarted = true;
+        try {
+          await writable.close();
+        } catch (err) {
+          try {
+            await writable.abort();
+          } catch (abortErr) {}
+          throw err;
+        }
+        if (this.receiverState !== state ||
+            state.sessionGeneration !== finalizationSessionGeneration ||
+            this.sessionGeneration !== finalizationSessionGeneration ||
+            state.terminalState) {
           return;
         }
         completionOptions = {
@@ -1207,6 +1248,12 @@ class WebRTCManager {
           savedToDisk: true
         };
       } catch (err) {
+        if (this.receiverState !== state ||
+            state.sessionGeneration !== finalizationSessionGeneration ||
+            this.sessionGeneration !== finalizationSessionGeneration ||
+            state.terminalState) {
+          return;
+        }
         await this.failIncomingTransfer(
           state.writeFailed ? 'WRITE_FAILED' : 'FINALIZATION_FAILED',
           err
@@ -1232,8 +1279,20 @@ class WebRTCManager {
       };
     }
 
-    if (channelGeneration !== this.dataChannelGeneration || this.receiverState !== state) return;
-    this.rememberCompletedTransfer(metadata, completionOptions.writeMode, channelGeneration);
+    if (this.receiverState !== state ||
+        state.sessionGeneration !== finalizationSessionGeneration ||
+        this.sessionGeneration !== finalizationSessionGeneration ||
+        state.terminalState ||
+        (completionOptions.writeMode !== 'disk' && channelGeneration !== this.dataChannelGeneration) ||
+        state.completionRecorded) {
+      return;
+    }
+    state.completionRecorded = true;
+    this.rememberCompletedTransfer(
+      metadata,
+      completionOptions.writeMode,
+      this.dataChannelGeneration
+    );
     state.terminalState = 'completed';
     this.stopNetworkDiagnostics();
     this.sendDeliveryControl({
