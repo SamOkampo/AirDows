@@ -271,7 +271,11 @@ class WebRTCManager {
     peerConnection.onconnectionstatechange = () => {
       if (this.peerConnection !== peerConnection || this.peerConnectionGeneration !== generation) return;
       console.log(`Connection state: ${peerConnection.connectionState}`);
-      if (['connected', 'disconnected', 'failed', 'closed'].includes(peerConnection.connectionState)) {
+      if (peerConnection.connectionState === 'connected') {
+        return;
+      }
+      if (['disconnected', 'failed', 'closed'].includes(peerConnection.connectionState)) {
+        this.negotiationActive = false;
         this.clearNegotiationDeadline(generation);
       }
       if (this.onConnectionStateChange) {
@@ -319,19 +323,22 @@ class WebRTCManager {
     }
 
     const channelGeneration = ++this.dataChannelGeneration;
+    const peerGeneration = this.peerConnectionGeneration;
     let terminalEventHandled = false;
+    let openEventHandled = false;
     this.dataChannel = channel;
     this.dataChannel.binaryType = 'arraybuffer';
     this.dataChannel.bufferedAmountLowThreshold = this.BUFFER_LOW_THRESHOLD;
 
     const handleTerminalEvent = (code, message, logMessage) => {
       if (terminalEventHandled || this.dataChannel !== channel ||
-          this.dataChannelGeneration !== channelGeneration) return false;
+          this.dataChannelGeneration !== channelGeneration ||
+          this.peerConnectionGeneration !== peerGeneration) return false;
 
       terminalEventHandled = true;
       this.dataChannelGeneration += 1;
       this.negotiationActive = false;
-      this.clearNegotiationDeadline();
+      this.clearNegotiationDeadline(peerGeneration);
       console.log(logMessage);
       this.rejectAllDeliveryWaiters(code, message);
       this.rejectAllResumeWaiters(code, message);
@@ -346,15 +353,20 @@ class WebRTCManager {
       return true;
     };
 
-    this.dataChannel.onopen = () => {
-      if (this.dataChannel !== channel || this.dataChannelGeneration !== channelGeneration) return;
+    const handleOpen = () => {
+      if (openEventHandled || this.dataChannel !== channel ||
+          this.dataChannelGeneration !== channelGeneration ||
+          this.peerConnectionGeneration !== peerGeneration) return false;
+      openEventHandled = true;
       console.log('Data channel state is: OPEN');
       this.negotiationActive = false;
-      this.clearNegotiationDeadline();
+      this.clearNegotiationDeadline(peerGeneration);
       if (this.onConnectionStateChange) {
         this.onConnectionStateChange('connected');
       }
+      return true;
     };
+    this.dataChannel.onopen = handleOpen;
 
     this.dataChannel.onclose = () => {
       handleTerminalEvent(
@@ -375,7 +387,9 @@ class WebRTCManager {
     };
 
     this.dataChannel.onmessage = (event) => {
-      if (this.dataChannel !== channel || this.dataChannelGeneration !== channelGeneration) return;
+      if (this.dataChannel !== channel ||
+          this.dataChannelGeneration !== channelGeneration ||
+          this.peerConnectionGeneration !== peerGeneration) return;
       this.enqueueIncomingMessage(event.data, channelGeneration);
     };
   }
