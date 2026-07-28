@@ -70,7 +70,8 @@ function createManager(options = {}) {
     deliveryTerminalSendTimeout: options.deliveryTerminalSendTimeout,
     deliveryAckRetryInterval: options.deliveryAckRetryInterval || 20,
     deliveryAckCooldown: options.deliveryAckCooldown || 2,
-    deliveryAckNow: options.deliveryAckNow
+    deliveryAckNow: options.deliveryAckNow,
+    rtcTransferStallTimeout: options.rtcTransferStallTimeout
   });
   manager.selectPerformanceProfile = async () => ({
     chunkSize: 4,
@@ -1245,4 +1246,219 @@ test('application maps delivery failures without completion or a stuck progress 
   assert.match(app, /connection \(is not ready\|closed\)[\s\S]*nextItem\.status = 'pending'/);
   assert.match(app, /webrtcManager\.onTransferError[\s\S]*recordNetworkHealth\('failed'\)[\s\S]*progressCard\.classList\.add\('hidden'\)/);
   assert.match(app, /webrtcManager\.onFileTransferCancelled[\s\S]*recordNetworkHealth\('cancelled'\)/);
+});
+
+test('open DataChannel whose buffer never drains rejects with RTC_TRANSFER_STALLED', async () => {
+  const manager = createManager({ rtcTransferStallTimeout: 15 });
+  const channel = new FakeDataChannel();
+  manager.setDataChannel(channel);
+  channel.bufferedAmountLowThreshold = 0;
+  channel.bufferedAmount = 1024;
+
+  await assert.rejects(
+    manager.waitForBufferedAmountLow(),
+    { code: 'RTC_TRANSFER_STALLED' }
+  );
+  assert.equal(channel.listeners.get('bufferedamountlow')?.size || 0, 0);
+  assert.equal(channel.listeners.get('close')?.size || 0, 0);
+  assert.equal(channel.listeners.get('error')?.size || 0, 0);
+});
+
+test('slow DataChannel progress keeps the stall watchdog alive', async () => {
+  const manager = createManager({ rtcTransferStallTimeout: 30 });
+  const channel = new FakeDataChannel();
+  manager.setDataChannel(channel);
+  channel.bufferedAmountLowThreshold = 0;
+  channel.bufferedAmount = 100;
+  const waiting = manager.waitForBufferedAmountLow();
+
+  for (const bufferedAmount of [80, 60, 40, 20, 0]) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    channel.bufferedAmount = bufferedAmount;
+    channel.emit('bufferedamountlow');
+  }
+
+  await waiting;
+});
+
+test('observed buffer progress restarts the complete stall deadline', async () => {
+  const manager = createManager({ rtcTransferStallTimeout: 30 });
+  const channel = new FakeDataChannel();
+  manager.setDataChannel(channel);
+  channel.bufferedAmountLowThreshold = 0;
+  channel.bufferedAmount = 100;
+  let settled = false;
+  const waiting = manager.waitForBufferedAmountLow().finally(() => {
+    settled = true;
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  channel.bufferedAmount = 50;
+  channel.emit('bufferedamountlow');
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(settled, false);
+
+  channel.bufferedAmount = 0;
+  channel.emit('bufferedamountlow');
+  await waiting;
+});
+
+test('DataChannel close and error beat the stall watchdog', async () => {
+  for (const terminalEvent of ['close', 'error']) {
+    const manager = createManager({ rtcTransferStallTimeout: 50 });
+    const channel = new FakeDataChannel();
+    manager.setDataChannel(channel);
+    channel.bufferedAmountLowThreshold = 0;
+    channel.bufferedAmount = 100;
+    const waiting = manager.waitForBufferedAmountLow();
+
+    if (terminalEvent === 'close') {
+      channel.close();
+    } else {
+      if (channel.onerror) channel.onerror(new Error('synthetic channel error'));
+      channel.emit('error');
+    }
+
+    await assert.rejects(
+      waiting,
+      (error) => error.code !== 'RTC_TRANSFER_STALLED'
+    );
+    await new Promise((resolve) => setTimeout(resolve, 55));
+    assert.equal(channel.listeners.get('bufferedamountlow')?.size || 0, 0);
+  }
+});
+
+test('local cancellation stops a pending stall watchdog', async () => {
+  const manager = createManager({ rtcTransferStallTimeout: 30 });
+  const channel = new FakeDataChannel();
+  const controller = new AbortController();
+  manager.setDataChannel(channel);
+  channel.bufferedAmountLowThreshold = 0;
+  channel.bufferedAmount = 100;
+  const waiting = manager.waitForBufferedAmountLow(controller.signal);
+
+  controller.abort();
+  await assert.rejects(waiting, { name: 'AbortError' });
+  await new Promise((resolve) => setTimeout(resolve, 35));
+  assert.equal(channel.listeners.get('bufferedamountlow')?.size || 0, 0);
+});
+
+test('stalled initial send reports one failure and releases active UI state', async () => {
+  const manager = createManager({ rtcTransferStallTimeout: 15 });
+  const channel = new FakeDataChannel();
+  let failureCallbacks = 0;
+  let wakeLockHeld = true;
+  let uiState = 'sending';
+  manager.reportTransferError = WebRTCManager.prototype.reportTransferError.bind(manager);
+  manager.onTransferError = () => {
+    failureCallbacks += 1;
+    wakeLockHeld = false;
+    uiState = 'ready';
+  };
+  manager.setDataChannel(channel);
+  channel.bufferedAmount = 2048;
+  const sending = manager.sendFile(createFile([1], 'blocked.bin'), {
+    transferId: 'stalled-initial-send'
+  });
+
+  for (let attempt = 0; attempt < 20 && !manager.activeSendTransfer; attempt += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  const transfer = manager.activeSendTransfer;
+  assert.ok(transfer);
+  await assert.rejects(sending, { code: 'RTC_TRANSFER_STALLED' });
+  assert.equal(failureCallbacks, 1);
+  assert.equal(wakeLockHeld, false);
+  assert.equal(uiState, 'ready');
+  assert.equal(transfer.terminalState, 'failed');
+  assert.equal(manager.activeSendTransfer, null);
+  assert.equal(manager.resumeWaiters.size, 0);
+  assert.equal(manager.deliveryWaiters.size, 0);
+  assert.equal(channel.sent.length, 0);
+
+  channel.close();
+  if (channel.onerror) channel.onerror(new Error('late synthetic channel error'));
+  assert.equal(failureCallbacks, 1);
+});
+
+test('stalled delivery retry runs terminal failure cleanup exactly once', async () => {
+  const manager = createManager({
+    deliveryAckTimeout: 1000,
+    deliveryAckRetryInterval: 5,
+    rtcTransferStallTimeout: 20
+  });
+  const file = createFile([], 'stalled.bin');
+  const transferId = 'stalled-delivery-retry';
+  let failureCallbacks = 0;
+  let wakeLockHeld = true;
+  let uiState = 'sending';
+  let channel;
+  channel = new FakeDataChannel((data) => {
+    if (typeof data !== 'string') return;
+    const message = JSON.parse(data);
+    if (message.type === 'metadata') {
+      setImmediate(() => manager.handleIncomingTextMessage(JSON.stringify({
+        type: 'receiver-ready',
+        transferId: message.transferId,
+        offset: 0,
+        size: message.size
+      })));
+    }
+    if (message.type === 'transfer-finished') {
+      channel.bufferedAmount = 2048;
+    }
+  });
+  manager.reportTransferError = WebRTCManager.prototype.reportTransferError.bind(manager);
+  manager.onTransferError = () => {
+    failureCallbacks += 1;
+    wakeLockHeld = false;
+    uiState = 'ready';
+  };
+  manager.setDataChannel(channel);
+  const sending = manager.sendFile(file, { transferId });
+
+  await waitForControl(channel, 'transfer-finished');
+  const transfer = manager.activeSendTransfer;
+  const waiter = manager.deliveryWaiters.get(transferId);
+  assert.ok(waiter);
+  await assert.rejects(sending, { code: 'RTC_TRANSFER_STALLED' });
+
+  assert.equal(failureCallbacks, 1);
+  assert.equal(wakeLockHeld, false);
+  assert.equal(uiState, 'ready');
+  assert.equal(transfer.terminalState, 'failed');
+  assert.equal(waiter.settled, true);
+  assert.equal(waiter.timeout, null);
+  assert.equal(waiter.retryTimeout, null);
+  assert.equal(waiter.retryAbortController.signal.aborted, true);
+  assert.equal(manager.deliveryWaiters.size, 0);
+  assert.equal(manager.activeSendTransfer, null);
+  assert.equal(controlMessages(channel, 'metadata').length, 1);
+  assert.equal(controlMessages(channel, 'transfer-finished').length, 1);
+
+  channel.close();
+  if (channel.onerror) channel.onerror(new Error('late synthetic channel error'));
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  assert.equal(failureCallbacks, 1);
+  assert.equal(manager.deliveryWaiters.size, 0);
+  assert.equal(manager.activeSendTransfer, null);
+});
+
+test('late buffered event from a replaced DataChannel cannot revive its wait', async () => {
+  const manager = createManager({ rtcTransferStallTimeout: 20 });
+  const oldChannel = new FakeDataChannel();
+  const replacementChannel = new FakeDataChannel();
+  manager.setDataChannel(oldChannel);
+  oldChannel.bufferedAmountLowThreshold = 0;
+  oldChannel.bufferedAmount = 100;
+  const waiting = manager.waitForBufferedAmountLow();
+
+  manager.setDataChannel(replacementChannel);
+  oldChannel.bufferedAmount = 0;
+  oldChannel.emit('bufferedamountlow');
+
+  await assert.rejects(waiting, { code: 'DATA_CHANNEL_REPLACED' });
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  assert.equal(replacementChannel.sent.length, 0);
+  assert.equal(oldChannel.listeners.get('bufferedamountlow')?.size || 0, 0);
 });

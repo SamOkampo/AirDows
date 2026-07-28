@@ -18,6 +18,9 @@ class WebRTCManager {
     this.DELIVERY_ACK_COOLDOWN = Number.isSafeInteger(options.deliveryAckCooldown)
       ? Math.max(1, options.deliveryAckCooldown)
       : 500;
+    this.RTC_TRANSFER_STALL_TIMEOUT = Number.isSafeInteger(options.rtcTransferStallTimeout)
+      ? Math.max(1, options.rtcTransferStallTimeout)
+      : 30000;
     this.deliveryAckNow = typeof options.deliveryAckNow === 'function'
       ? options.deliveryAckNow
       : Date.now;
@@ -1179,6 +1182,7 @@ class WebRTCManager {
         );
       }
       if (transferSignal && transferSignal.aborted) throw err;
+      if (err && err.code === 'RTC_TRANSFER_STALLED') throw err;
 
       const terminalError = this.createDeliveryError(
         'DELIVERY_TERMINAL_SEND_FAILED',
@@ -1203,7 +1207,12 @@ class WebRTCManager {
       if (current !== waiter || current.settled) return;
       try {
         await retry(waiter.retryAbortController.signal);
-      } catch (err) {}
+      } catch (err) {
+        if (err && err.code === 'RTC_TRANSFER_STALLED') {
+          this.rejectDeliveryWaiter(transferId, err);
+          return;
+        }
+      }
       if (this.deliveryWaiters.get(transferId) !== waiter || waiter.settled) return;
       waiter.retryTimeout = setTimeout(scheduleRetry, this.DELIVERY_ACK_RETRY_INTERVAL);
       if (typeof waiter.retryTimeout.unref === 'function') waiter.retryTimeout.unref();
@@ -1250,8 +1259,10 @@ class WebRTCManager {
     if (waiter.transfer && !this.transitionSenderTerminalState(waiter.transfer, terminalState)) return false;
 
     waiter.settled = true;
-    clearTimeout(waiter.timeout);
+    if (waiter.timeout) clearTimeout(waiter.timeout);
+    waiter.timeout = null;
     if (waiter.retryTimeout) clearTimeout(waiter.retryTimeout);
+    waiter.retryTimeout = null;
     waiter.retryAbortController.abort();
     this.deliveryWaiters.delete(transferId);
 
@@ -1358,6 +1369,12 @@ class WebRTCManager {
       const resumeWaiter = this.resumeWaiters.get(transfer.transferId);
       if (resumeWaiter) clearTimeout(resumeWaiter.timeout);
       this.resumeWaiters.delete(transfer.transferId);
+      if (err && err.code === 'RTC_TRANSFER_STALLED') {
+        this.transitionSenderTerminalState(transfer, 'failed');
+        this.invokeSenderTerminalCallback(transfer, 'failed', () => {
+          this.reportTransferError('network', err, file.name);
+        });
+      }
       if (this.activeSendTransfer === transfer) {
         this.activeSendTransfer = null;
       }
@@ -1482,9 +1499,15 @@ class WebRTCManager {
         throw this.createTransferCancelledError();
       }
 
-      if (['DELIVERY_ACK_TIMEOUT', 'DELIVERY_REJECTED', 'DELIVERY_TERMINAL_SEND_TIMEOUT'].includes(err.code)) {
+      if ([
+        'DELIVERY_ACK_TIMEOUT',
+        'DELIVERY_REJECTED',
+        'DELIVERY_TERMINAL_SEND_TIMEOUT',
+        'RTC_TRANSFER_STALLED'
+      ].includes(err.code)) {
+        this.transitionSenderTerminalState(transfer, 'failed');
         this.invokeSenderTerminalCallback(transfer, 'failed', () => {
-          this.reportTransferError('protocol', err, file.name);
+          this.reportTransferError(err.code === 'RTC_TRANSFER_STALLED' ? 'network' : 'protocol', err, file.name);
         });
       }
 
@@ -1744,10 +1767,13 @@ class WebRTCManager {
     }
 
     const channel = this.dataChannel;
+    const channelGeneration = this.dataChannelGeneration;
 
     return new Promise((resolve, reject) => {
       let pollTimer = null;
+      let stallTimer = null;
       let settled = false;
+      let lastBufferedAmount = channel.bufferedAmount;
 
       const cleanup = () => {
         channel.removeEventListener('bufferedamountlow', handleLow);
@@ -1755,6 +1781,7 @@ class WebRTCManager {
         channel.removeEventListener('error', handleError);
         if (signal) signal.removeEventListener('abort', handleAbort);
         if (pollTimer) clearInterval(pollTimer);
+        if (stallTimer) clearTimeout(stallTimer);
       };
 
       const finish = (callback, value) => {
@@ -1764,9 +1791,58 @@ class WebRTCManager {
         callback(value);
       };
 
+      const isCurrentChannel = () => (
+        this.dataChannel === channel &&
+        this.dataChannelGeneration === channelGeneration
+      );
+
+      const armStallWatchdog = () => {
+        if (stallTimer) clearTimeout(stallTimer);
+        stallTimer = setTimeout(() => {
+          if (!isCurrentChannel()) {
+            finish(
+              reject,
+              this.createDeliveryError('DATA_CHANNEL_REPLACED', 'Data connection was replaced during transfer.')
+            );
+            return;
+          }
+
+          const bufferedAmount = channel.bufferedAmount;
+          if (bufferedAmount <= channel.bufferedAmountLowThreshold) {
+            finish(resolve);
+            return;
+          }
+          if (bufferedAmount < lastBufferedAmount) {
+            lastBufferedAmount = bufferedAmount;
+            armStallWatchdog();
+            return;
+          }
+
+          finish(
+            reject,
+            this.createDeliveryError('RTC_TRANSFER_STALLED', 'Data connection stopped making transfer progress.')
+          );
+        }, this.RTC_TRANSFER_STALL_TIMEOUT);
+        if (typeof stallTimer.unref === 'function') stallTimer.unref();
+      };
+
       const handleLow = () => {
-        if (channel.bufferedAmount <= channel.bufferedAmountLowThreshold) {
+        if (!isCurrentChannel()) {
+          finish(
+            reject,
+            this.createDeliveryError('DATA_CHANNEL_REPLACED', 'Data connection was replaced during transfer.')
+          );
+          return;
+        }
+
+        const bufferedAmount = channel.bufferedAmount;
+        if (bufferedAmount <= channel.bufferedAmountLowThreshold) {
           finish(resolve);
+          return;
+        }
+        if (bufferedAmount < lastBufferedAmount) {
+          lastBufferedAmount = bufferedAmount;
+          armStallWatchdog();
         }
       };
 
@@ -1793,6 +1869,8 @@ class WebRTCManager {
         handleLow();
         return;
       }
+
+      armStallWatchdog();
 
       // Some browsers do not dispatch bufferedamountlow consistently under load.
       pollTimer = setInterval(handleLow, 100);
