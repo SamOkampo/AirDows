@@ -21,6 +21,11 @@ class WebRTCManager {
     this.RTC_TRANSFER_STALL_TIMEOUT = Number.isSafeInteger(options.rtcTransferStallTimeout)
       ? Math.max(1, options.rtcTransferStallTimeout)
       : 30000;
+    this.WEBRTC_NEGOTIATION_TIMEOUT = Number.isSafeInteger(options.negotiationTimeout)
+      ? Math.max(1, options.negotiationTimeout)
+      : 15000;
+    this.negotiationSetTimeout = options.setTimeoutFn || setTimeout;
+    this.negotiationClearTimeout = options.clearTimeoutFn || clearTimeout;
     this.deliveryAckNow = typeof options.deliveryAckNow === 'function'
       ? options.deliveryAckNow
       : Date.now;
@@ -63,6 +68,9 @@ class WebRTCManager {
     this.peerConnectionGeneration = 0;
     this.recoveryPrepared = false;
     this.negotiationActive = false;
+    this.negotiationTimer = null;
+    this.negotiationTimerGeneration = 0;
+    this.lastNegotiationError = null;
     this.restartRequestCounter = 0;
     this.handledRestartRequests = new Set();
     this.MAX_HANDLED_RESTART_REQUESTS = 64;
@@ -158,9 +166,12 @@ class WebRTCManager {
   }
 
   createPeerConnection() {
+    this.clearNegotiationDeadline();
     const generation = ++this.peerConnectionGeneration;
     const peerConnection = new RTCPeerConnection(this.rtcConfig);
     this.peerConnection = peerConnection;
+    this.negotiationActive = true;
+    this.armNegotiationDeadline(peerConnection, generation);
 
     peerConnection.onicecandidate = (event) => {
       if (this.peerConnection !== peerConnection || this.peerConnectionGeneration !== generation) return;
@@ -176,6 +187,9 @@ class WebRTCManager {
     peerConnection.onconnectionstatechange = () => {
       if (this.peerConnection !== peerConnection || this.peerConnectionGeneration !== generation) return;
       console.log(`Connection state: ${peerConnection.connectionState}`);
+      if (['connected', 'disconnected', 'failed', 'closed'].includes(peerConnection.connectionState)) {
+        this.clearNegotiationDeadline(generation);
+      }
       if (this.onConnectionStateChange) {
         this.onConnectionStateChange(peerConnection.connectionState);
       }
@@ -233,6 +247,7 @@ class WebRTCManager {
       terminalEventHandled = true;
       this.dataChannelGeneration += 1;
       this.negotiationActive = false;
+      this.clearNegotiationDeadline();
       console.log(logMessage);
       this.rejectAllDeliveryWaiters(code, message);
       this.stopNetworkDiagnostics();
@@ -250,6 +265,7 @@ class WebRTCManager {
       if (this.dataChannel !== channel || this.dataChannelGeneration !== channelGeneration) return;
       console.log('Data channel state is: OPEN');
       this.negotiationActive = false;
+      this.clearNegotiationDeadline();
       if (this.onConnectionStateChange) {
         this.onConnectionStateChange('connected');
       }
@@ -525,6 +541,77 @@ class WebRTCManager {
     } catch (err) {
       console.error('Error creating SDP Offer:', err);
     }
+  }
+
+  armNegotiationDeadline(peerConnection, generation) {
+    if (!peerConnection || this.peerConnection !== peerConnection ||
+        this.peerConnectionGeneration !== generation) return false;
+    if (this.negotiationTimer && this.negotiationTimerGeneration === generation) return false;
+
+    this.clearNegotiationDeadline();
+    this.negotiationTimerGeneration = generation;
+    this.negotiationTimer = this.negotiationSetTimeout(() => {
+      this.handleNegotiationTimeout(peerConnection, generation);
+    }, this.WEBRTC_NEGOTIATION_TIMEOUT);
+    if (typeof this.negotiationTimer?.unref === 'function') this.negotiationTimer.unref();
+    return true;
+  }
+
+  clearNegotiationDeadline(expectedGeneration = null) {
+    if (expectedGeneration !== null && this.negotiationTimerGeneration !== expectedGeneration) {
+      return false;
+    }
+    if (this.negotiationTimer) {
+      this.negotiationClearTimeout(this.negotiationTimer);
+    }
+    this.negotiationTimer = null;
+    this.negotiationTimerGeneration = 0;
+    return true;
+  }
+
+  handleNegotiationTimeout(peerConnection, generation) {
+    if (!peerConnection || this.peerConnection !== peerConnection ||
+        this.peerConnectionGeneration !== generation ||
+        this.negotiationTimerGeneration !== generation) return false;
+
+    this.clearNegotiationDeadline(generation);
+    this.negotiationActive = false;
+    this.peerConnectionGeneration += 1;
+    this.dataChannelGeneration += 1;
+    this.rejectAllDeliveryWaiters(
+      'WEBRTC_NEGOTIATION_TIMEOUT',
+      'WebRTC negotiation timed out.'
+    );
+    this.rejectAllResumeWaiters(
+      'WEBRTC_NEGOTIATION_TIMEOUT',
+      'WebRTC negotiation timed out before receiver readiness.'
+    );
+    this.stopNetworkDiagnostics();
+
+    if (this.dataChannel) {
+      try {
+        this.dataChannel.close();
+      } catch (err) {}
+      this.dataChannel = null;
+    }
+    try {
+      peerConnection.close();
+    } catch (err) {}
+    if (this.peerConnection === peerConnection) this.peerConnection = null;
+
+    const error = this.createDeliveryError(
+      'WEBRTC_NEGOTIATION_TIMEOUT',
+      'WebRTC negotiation timed out.'
+    );
+    this.lastNegotiationError = error;
+    if (!this.isClosing && this.onConnectionStateChange) {
+      try {
+        this.onConnectionStateChange('failed', { code: error.code });
+      } catch (err) {
+        console.error('WebRTC negotiation timeout callback failed');
+      }
+    }
+    return true;
   }
 
   isValidRestartRequest(message) {
@@ -1626,6 +1713,7 @@ class WebRTCManager {
   }
 
   startNewPairingSession() {
+    this.clearNegotiationDeadline();
     this.sessionGeneration += 1;
     this.negotiationActive = false;
     this.restartRequestCounter = 0;
@@ -2154,6 +2242,7 @@ class WebRTCManager {
     this.isClosing = true;
     this.recoveryPrepared = false;
     this.negotiationActive = false;
+    this.clearNegotiationDeadline();
     this.sessionGeneration += 1;
     this.peerConnectionGeneration += 1;
     this.dataChannelGeneration += 1;
@@ -2241,6 +2330,7 @@ class WebRTCManager {
   prepareForRecovery() {
     if (this.recoveryPrepared) return true;
     this.recoveryPrepared = true;
+    this.clearNegotiationDeadline();
     this.peerConnectionGeneration += 1;
     this.dataChannelGeneration += 1;
     this.signalQueueGeneration += 1;

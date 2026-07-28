@@ -319,6 +319,118 @@ function waitForAsyncSignals() {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
+function createNegotiationDeadlineHarness() {
+  const timers = new Map();
+  const cleared = [];
+  let nextTimer = 0;
+  const manager = new WebRTCManager(
+    { sendSignal() {}, sendRelayUsage() {} },
+    {
+      negotiationTimeout: 25,
+      setTimeoutFn(callback, delay) {
+        const timer = { id: ++nextTimer, callback, delay };
+        timers.set(timer.id, timer);
+        return timer;
+      },
+      clearTimeoutFn(timer) {
+        cleared.push(timer.id);
+        timers.delete(timer.id);
+      }
+    }
+  );
+  return { manager, timers, cleared };
+}
+
+function startNegotiationAttempt(manager, connectionState = 'new') {
+  const peer = {
+    connectionState,
+    closed: 0,
+    close() {
+      this.closed += 1;
+    }
+  };
+  manager.peerConnection = peer;
+  const generation = ++manager.peerConnectionGeneration;
+  manager.negotiationActive = true;
+  manager.armNegotiationDeadline(peer, generation);
+  return { peer, generation, timer: manager.negotiationTimer };
+}
+
+for (const frozenState of ['new', 'connecting']) {
+  test(`WebRTC negotiation deadline retires a peer frozen in ${frozenState}`, () => {
+    const { manager } = createNegotiationDeadlineHarness();
+    const failures = [];
+    manager.onConnectionStateChange = (state, details) => failures.push({ state, details });
+    const { peer, timer } = startNegotiationAttempt(manager, frozenState);
+
+    timer.callback();
+
+    assert.equal(peer.closed, 1);
+    assert.equal(manager.peerConnection, null);
+    assert.equal(manager.negotiationTimer, null);
+    assert.equal(manager.negotiationActive, false);
+    assert.deepEqual(failures, [{
+      state: 'failed',
+      details: { code: 'WEBRTC_NEGOTIATION_TIMEOUT' }
+    }]);
+  });
+}
+
+test('successful WebRTC connection cancels the negotiation deadline', () => {
+  const { manager, timers } = createNegotiationDeadlineHarness();
+  let failures = 0;
+  manager.onConnectionStateChange = () => { failures += 1; };
+  const { generation, timer } = startNegotiationAttempt(manager);
+
+  assert.equal(manager.clearNegotiationDeadline(generation), true);
+  timer.callback();
+
+  assert.equal(timers.size, 0);
+  assert.equal(failures, 0);
+  assert.notEqual(manager.peerConnection, null);
+});
+
+test('replacement negotiation invalidates a captured timeout from the previous peer', () => {
+  const { manager } = createNegotiationDeadlineHarness();
+  let failures = 0;
+  manager.onConnectionStateChange = () => { failures += 1; };
+  const first = startNegotiationAttempt(manager);
+  const second = startNegotiationAttempt(manager, 'connecting');
+
+  first.timer.callback();
+
+  assert.equal(first.peer.closed, 0);
+  assert.equal(manager.peerConnection, second.peer);
+  assert.equal(manager.negotiationTimer, second.timer);
+  assert.equal(failures, 0);
+});
+
+test('late duplicate negotiation timeout performs cleanup and notification once', () => {
+  const { manager } = createNegotiationDeadlineHarness();
+  let failures = 0;
+  manager.onConnectionStateChange = () => { failures += 1; };
+  const { peer, timer } = startNegotiationAttempt(manager);
+
+  timer.callback();
+  timer.callback();
+
+  assert.equal(peer.closed, 1);
+  assert.equal(failures, 1);
+});
+
+test('negotiation timeout feeds the bounded application reconnect path', () => {
+  const appSource = fs.readFileSync(path.join(ROOT, 'public/js/app.js'), 'utf8');
+
+  assert.match(
+    appSource,
+    /state === 'failed'[\s\S]{0,250}scheduleReconnect\(\)/
+  );
+  assert.match(
+    appSource,
+    /reconnectAttempts >= maxReconnectAttempts[\s\S]{0,200}resetApp\(\)/
+  );
+});
+
 test('a recovered offer queued before reconnect creates an answer on the replacement peer', async () => {
   const rtc = installFakeRtc();
   const sentSignals = [];
