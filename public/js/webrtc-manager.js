@@ -226,7 +226,11 @@ class WebRTCManager {
       this.rejectAllDeliveryWaiters(code, message);
       this.stopNetworkDiagnostics();
       if (!this.isClosing && this.onConnectionStateChange) {
-        this.onConnectionStateChange('disconnected');
+        try {
+          this.onConnectionStateChange('disconnected');
+        } catch (err) {
+          console.error('Data channel disconnection callback failed');
+        }
       }
       return true;
     };

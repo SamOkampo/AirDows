@@ -416,6 +416,42 @@ test('data-channel error followed by close disconnects and rejects waiters exact
   assert.equal(manager.deliveryWaiters.size, 0);
 });
 
+test('throwing disconnection callback cannot interrupt terminal cleanup or waiter rejection', async () => {
+  const manager = createManager({ deliveryAckTimeout: 1000 });
+  const channel = new FakeDataChannel();
+  const rejectionCodes = [];
+  let notifications = 0;
+  let diagnosticsStops = 0;
+  let receiverCleanups = 0;
+  const rejectAllDeliveryWaiters = manager.rejectAllDeliveryWaiters.bind(manager);
+  manager.onConnectionStateChange = () => {
+    notifications += 1;
+    throw new Error('synthetic UI callback failure');
+  };
+  manager.stopNetworkDiagnostics = () => {
+    diagnosticsStops += 1;
+  };
+  manager.cleanupReceiverDiskStream = async () => {
+    receiverCleanups += 1;
+  };
+  manager.rejectAllDeliveryWaiters = (code, message) => {
+    rejectionCodes.push(code);
+    return rejectAllDeliveryWaiters(code, message);
+  };
+  manager.setDataChannel(channel);
+  const waiter = manager.createDeliveryWaiter('throwing-disconnect-callback', 1);
+
+  assert.doesNotThrow(() => channel.onerror(new Error('synthetic channel error')));
+  channel.onclose();
+
+  await assert.rejects(waiter, { code: 'DATA_CHANNEL_ERROR' });
+  assert.equal(notifications, 1);
+  assert.equal(diagnosticsStops, 1);
+  assert.equal(receiverCleanups, 1);
+  assert.deepEqual(rejectionCodes, ['DATA_CHANNEL_ERROR']);
+  assert.equal(manager.deliveryWaiters.size, 0);
+});
+
 test('data-channel close followed by error keeps the close as the only terminal event', async () => {
   const manager = createManager({ deliveryAckTimeout: 1000 });
   const channel = new FakeDataChannel();
