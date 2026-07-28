@@ -9,6 +9,9 @@ class WebRTCManager {
     this.DELIVERY_ACK_TIMEOUT = Number.isSafeInteger(options.deliveryAckTimeout)
       ? Math.max(1, options.deliveryAckTimeout)
       : 30000;
+    this.DELIVERY_UNCERTAIN_TIMEOUT = Number.isSafeInteger(options.deliveryUncertainTimeout)
+      ? Math.max(1, options.deliveryUncertainTimeout)
+      : 15000;
     this.DELIVERY_TERMINAL_SEND_TIMEOUT = Number.isSafeInteger(options.deliveryTerminalSendTimeout)
       ? Math.max(1, options.deliveryTerminalSendTimeout)
       : 15000;
@@ -65,6 +68,7 @@ class WebRTCManager {
     this.activeSendTransfer = null;
     this.resumeWaiters = new Map();
     this.deliveryWaiters = new Map();
+    this.uncertainDelivery = null;
     this.completedTransfers = new Map();
     this.completedTransferIds = new Set();
     this.MAX_COMPLETED_TRANSFER_RECEIPTS = 128;
@@ -1474,6 +1478,8 @@ class WebRTCManager {
           : null,
         settled: false,
         timeout: null,
+        uncertain: false,
+        uncertainTimeout: null,
         retryTimeout: null,
         retryAbortController: new AbortController()
       };
@@ -1487,12 +1493,8 @@ class WebRTCManager {
     if (!waiter || waiter.settled || waiter.timeout) return false;
 
     waiter.timeout = setTimeout(() => {
-      this.settleDeliveryWaiter(
-        transferId,
-        'reject',
-        this.createDeliveryError('DELIVERY_ACK_TIMEOUT', 'Delivery confirmation timed out.'),
-        'failed'
-      );
+      waiter.timeout = null;
+      this.markDeliveryUncertain(transferId);
     }, this.DELIVERY_ACK_TIMEOUT);
     if (typeof waiter.timeout.unref === 'function') waiter.timeout.unref();
     return true;
@@ -1590,6 +1592,28 @@ class WebRTCManager {
     return true;
   }
 
+  markDeliveryUncertain(transferId) {
+    const waiter = this.deliveryWaiters.get(transferId);
+    if (!waiter || waiter.settled || waiter.uncertain) return false;
+
+    waiter.uncertain = true;
+    this.uncertainDelivery = Object.freeze({
+      transferId,
+      size: waiter.size,
+      channelGeneration: this.dataChannelGeneration
+    });
+    waiter.uncertainTimeout = setTimeout(() => {
+      this.settleDeliveryWaiter(
+        transferId,
+        'reject',
+        this.createDeliveryError('DELIVERY_ACK_TIMEOUT', 'Delivery confirmation timed out.'),
+        'failed'
+      );
+    }, this.DELIVERY_UNCERTAIN_TIMEOUT);
+    if (typeof waiter.uncertainTimeout.unref === 'function') waiter.uncertainTimeout.unref();
+    return true;
+  }
+
   getSenderFailureType(error) {
     if (error && error.code === 'RELAY_LIMIT_REACHED') return 'relay-budget';
     if (error && (
@@ -1664,10 +1688,16 @@ class WebRTCManager {
     waiter.settled = true;
     if (waiter.timeout) clearTimeout(waiter.timeout);
     waiter.timeout = null;
+    if (waiter.uncertainTimeout) clearTimeout(waiter.uncertainTimeout);
+    waiter.uncertainTimeout = null;
     if (waiter.retryTimeout) clearTimeout(waiter.retryTimeout);
     waiter.retryTimeout = null;
     waiter.retryAbortController.abort();
     this.deliveryWaiters.delete(transferId);
+    if (this.uncertainDelivery &&
+        this.uncertainDelivery.transferId === transferId) {
+      this.uncertainDelivery = null;
+    }
 
     if (outcome === 'resolve') waiter.resolve();
     else waiter.reject(error);
@@ -2568,6 +2598,7 @@ class WebRTCManager {
     this.pendingRemoteCandidates = [];
     this.resumeWaiters.clear();
     this.deliveryWaiters.clear();
+    this.uncertainDelivery = null;
     this.completedTransfers.clear();
     this.completedTransferIds.clear();
     this.handledRestartRequests.clear();

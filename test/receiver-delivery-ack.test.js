@@ -67,6 +67,7 @@ class FakeDataChannel {
 function createManager(options = {}) {
   const manager = new WebRTCManager({}, {
     deliveryAckTimeout: options.deliveryAckTimeout || 100,
+    deliveryUncertainTimeout: options.deliveryUncertainTimeout || 20,
     deliveryTerminalSendTimeout: options.deliveryTerminalSendTimeout,
     deliveryAckRetryInterval: options.deliveryAckRetryInterval || 20,
     deliveryAckCooldown: options.deliveryAckCooldown || 2,
@@ -582,6 +583,180 @@ test('ACK timeout rejects sendFile with DELIVERY_ACK_TIMEOUT', async () => {
   assert.equal(manager.handleTransferAck({ type: 'transfer-ack', transferId, size: file.size }), false);
   assert.equal(transfer.terminalState, 'failed');
   assert.equal(completions, 0);
+});
+
+test('primary ACK timeout enters a bounded uncertain-delivery state', async () => {
+  const { manager, file, transferId, promise } = startSender({
+    deliveryAckTimeout: 5,
+    deliveryUncertainTimeout: 100
+  });
+  let settled = false;
+  promise.finally(() => {
+    settled = true;
+  }).catch(() => {});
+
+  await waitForControl(manager.dataChannel, 'transfer-finished');
+  await new Promise((resolve) => setTimeout(resolve, 15));
+
+  assert.equal(settled, false);
+  assert.equal(manager.uncertainDelivery.transferId, transferId);
+  assert.equal(manager.uncertainDelivery.size, file.size);
+  assert.equal(manager.deliveryWaiters.get(transferId).uncertain, true);
+  assert.equal(manager.activeSendTransfer.terminalState, null);
+
+  manager.cancelActiveTransfer();
+  await assert.rejects(promise, { code: 'TRANSFER_CANCELLED' });
+  assert.equal(manager.uncertainDelivery, null);
+});
+
+test('a valid late ACK completes once during the uncertain-delivery window', async () => {
+  const { manager, file, transferId, promise } = startSender({
+    deliveryAckTimeout: 5,
+    deliveryUncertainTimeout: 100
+  });
+  let completions = 0;
+  manager.onFileTransferComplete = () => {
+    completions += 1;
+  };
+
+  await waitForControl(manager.dataChannel, 'transfer-finished');
+  await new Promise((resolve) => setTimeout(resolve, 15));
+  assert.equal(manager.uncertainDelivery.transferId, transferId);
+
+  assert.equal(manager.handleTransferAck({
+    type: 'transfer-ack',
+    transferId,
+    size: file.size
+  }), true);
+  await promise;
+
+  assert.equal(completions, 1);
+  assert.equal(manager.uncertainDelivery, null);
+  assert.equal(manager.deliveryWaiters.size, 0);
+  assert.equal(manager.handleTransferAck({
+    type: 'transfer-ack',
+    transferId,
+    size: file.size
+  }), false);
+  assert.equal(completions, 1);
+});
+
+test('the next queued file remains blocked until uncertain delivery is resolved', async () => {
+  const manager = createManager({
+    deliveryAckTimeout: 5,
+    deliveryUncertainTimeout: 100
+  });
+  const channel = new FakeDataChannel((data) => {
+    if (typeof data !== 'string') return;
+    const message = JSON.parse(data);
+    if (message.type === 'metadata') {
+      setImmediate(() => manager.handleIncomingTextMessage(JSON.stringify({
+        type: 'receiver-ready',
+        transferId: message.transferId,
+        offset: 0,
+        size: message.size
+      })));
+    }
+  });
+  manager.setDataChannel(channel);
+  const firstFile = createFile([], 'first.bin');
+  const secondFile = createFile([], 'second.bin');
+  let secondStarted = false;
+  const queued = (async () => {
+    await manager.sendFile(firstFile, { transferId: 'uncertain-first' });
+    secondStarted = true;
+    await manager.sendFile(secondFile, { transferId: 'uncertain-second' });
+  })();
+
+  await waitForControl(channel, 'transfer-finished');
+  await new Promise((resolve) => setTimeout(resolve, 15));
+  assert.equal(manager.uncertainDelivery.transferId, 'uncertain-first');
+  assert.equal(secondStarted, false);
+  assert.equal(
+    controlMessages(channel, 'metadata').some((message) => message.transferId === 'uncertain-second'),
+    false
+  );
+
+  manager.handleTransferAck({
+    type: 'transfer-ack',
+    transferId: 'uncertain-first',
+    size: 0
+  });
+  for (let attempt = 0; attempt < 50 && !secondStarted; attempt += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.equal(secondStarted, true);
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    if (controlMessages(channel, 'transfer-finished')
+      .some((message) => message.transferId === 'uncertain-second')) {
+      break;
+    }
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.equal(
+    controlMessages(channel, 'transfer-finished')
+      .some((message) => message.transferId === 'uncertain-second'),
+    true
+  );
+  manager.handleTransferAck({
+    type: 'transfer-ack',
+    transferId: 'uncertain-second',
+    size: 0
+  });
+  await queued;
+});
+
+test('DataChannel closure releases an uncertain delivery immediately', async () => {
+  const { manager, channel, transferId, promise } = startSender({
+    deliveryAckTimeout: 5,
+    deliveryUncertainTimeout: 100
+  });
+
+  await waitForControl(channel, 'transfer-finished');
+  await new Promise((resolve) => setTimeout(resolve, 15));
+  assert.equal(manager.uncertainDelivery.transferId, transferId);
+  channel.close();
+
+  await assert.rejects(promise, { code: 'DATA_CHANNEL_CLOSED' });
+  assert.equal(manager.uncertainDelivery, null);
+  assert.equal(manager.deliveryWaiters.size, 0);
+});
+
+test('manual cancellation releases an uncertain delivery without starting another file', async () => {
+  const { manager, channel, transferId, promise } = startSender({
+    deliveryAckTimeout: 5,
+    deliveryUncertainTimeout: 100
+  });
+
+  await waitForControl(channel, 'transfer-finished');
+  await new Promise((resolve) => setTimeout(resolve, 15));
+  assert.equal(manager.uncertainDelivery.transferId, transferId);
+  assert.equal(manager.cancelActiveTransfer(), true);
+
+  await assert.rejects(promise, { code: 'TRANSFER_CANCELLED' });
+  assert.equal(manager.uncertainDelivery, null);
+  assert.equal(manager.deliveryWaiters.size, 0);
+});
+
+test('uncertain-delivery deadline produces one terminal failure and clears the barrier', async () => {
+  const { manager, channel, promise } = startSender({
+    deliveryAckTimeout: 5,
+    deliveryUncertainTimeout: 10
+  });
+  let failures = 0;
+  manager.reportTransferError = () => {
+    failures += 1;
+  };
+
+  await assert.rejects(promise, { code: 'DELIVERY_ACK_TIMEOUT' });
+  assert.equal(failures, 1);
+  assert.equal(manager.uncertainDelivery, null);
+  assert.equal(manager.deliveryWaiters.size, 0);
+  assert.equal(manager.activeSendTransfer, null);
+
+  channel.close();
+  if (channel.onerror) channel.onerror(new Error('late channel error'));
+  assert.equal(failures, 1);
 });
 
 test('transfer-failed rejects with DELIVERY_REJECTED', async () => {
