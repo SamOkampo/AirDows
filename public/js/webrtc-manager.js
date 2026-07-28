@@ -74,6 +74,7 @@ class WebRTCManager {
     this.restartRequestCounter = 0;
     this.handledRestartRequests = new Set();
     this.MAX_HANDLED_RESTART_REQUESTS = 64;
+    this.encryptionGeneration = 0;
     this.encryption = this.createEncryptionState();
     this.relayBudget = { plan: 'free', limitBytes: Number.POSITIVE_INFINITY, usedBytes: 0, blocked: false };
     this.pendingRelayUsageBytes = 0;
@@ -119,14 +120,38 @@ class WebRTCManager {
 
   createEncryptionState() {
     return {
+      generation: this.encryptionGeneration,
       available: typeof crypto !== 'undefined' && Boolean(crypto.subtle),
       keyPair: null,
+      keyPairPromise: null,
       remotePublicKey: null,
       sessionKey: null,
+      derivePromise: null,
       ready: null,
       resolveReady: null,
       rejectReady: null
     };
+  }
+
+  resetEncryptionSession() {
+    this.encryptionGeneration += 1;
+    this.encryption = this.createEncryptionState();
+    return this.encryption;
+  }
+
+  isCurrentEncryptionState(state) {
+    return this.encryption === state &&
+      state.generation === this.encryptionGeneration;
+  }
+
+  ensureEncryptionReadyPromise(state = this.encryption) {
+    if (!state.ready) {
+      state.ready = new Promise((resolve, reject) => {
+        state.resolveReady = resolve;
+        state.rejectReady = reject;
+      });
+    }
+    return state.ready;
   }
 
   setIceConfig(config) {
@@ -145,12 +170,7 @@ class WebRTCManager {
     this.roomCode = roomCode;
     this.isClosing = false;
     this.recoveryPrepared = false;
-    if (!this.encryption.ready) {
-      this.encryption.ready = new Promise((resolve, reject) => {
-        this.encryption.resolveReady = resolve;
-        this.encryption.rejectReady = reject;
-      });
-    }
+    this.ensureEncryptionReadyPromise();
     this.startEncryptionSession().catch((err) => {
       console.warn('Application encryption unavailable. WebRTC transport encryption remains active:', err.message);
     });
@@ -343,25 +363,44 @@ class WebRTCManager {
   }
 
   async startEncryptionSession() {
-    if (!this.encryption.available || this.encryption.keyPair) return;
+    const state = this.encryption;
+    if (!state.available) return;
+    this.ensureEncryptionReadyPromise(state);
 
-    this.encryption.keyPair = await crypto.subtle.generateKey(
-      { name: 'ECDH', namedCurve: 'P-256' },
-      false,
-      ['deriveKey']
-    );
+    if (!state.keyPair && !state.keyPairPromise) {
+      state.keyPairPromise = (async () => {
+        const keyPair = await crypto.subtle.generateKey(
+          { name: 'ECDH', namedCurve: 'P-256' },
+          false,
+          ['deriveKey']
+        );
+        if (!this.isCurrentEncryptionState(state)) return;
 
-    const publicKey = await crypto.subtle.exportKey('jwk', this.encryption.keyPair.publicKey);
-    this.socketManager.sendSignal(this.roomCode, {
-      type: 'crypto-key',
-      publicKey
-    });
+        state.keyPair = keyPair;
+        const publicKey = await crypto.subtle.exportKey('jwk', keyPair.publicKey);
+        if (!this.isCurrentEncryptionState(state) || state.keyPair !== keyPair) return;
 
-    await this.deriveSessionKey();
+        this.socketManager.sendSignal(this.roomCode, {
+          type: 'crypto-key',
+          publicKey
+        });
+      })().finally(() => {
+        if (this.isCurrentEncryptionState(state)) {
+          state.keyPairPromise = null;
+        }
+      });
+    }
+
+    if (state.keyPairPromise) {
+      await state.keyPairPromise;
+    }
+    if (!this.isCurrentEncryptionState(state)) return;
+    await this.deriveSessionKey(state);
   }
 
   async acceptRemoteCryptoKey(publicKeyJwk, isCurrentConnection = () => true) {
-    if (!this.encryption.available || !publicKeyJwk || typeof publicKeyJwk !== 'object') return;
+    const state = this.encryption;
+    if (!state.available || !publicKeyJwk || typeof publicKeyJwk !== 'object') return;
 
     const remotePublicKey = await crypto.subtle.importKey(
       'jwk',
@@ -370,41 +409,67 @@ class WebRTCManager {
       false,
       []
     );
-    if (!isCurrentConnection()) return;
+    if (!isCurrentConnection() || !this.isCurrentEncryptionState(state)) return;
 
-    this.encryption.remotePublicKey = remotePublicKey;
+    state.remotePublicKey = remotePublicKey;
     await this.startEncryptionSession();
-    if (!isCurrentConnection()) return;
-    await this.deriveSessionKey();
+    if (!isCurrentConnection() || !this.isCurrentEncryptionState(state)) return;
+    await this.deriveSessionKey(state);
   }
 
-  async deriveSessionKey() {
-    if (this.encryption.sessionKey || !this.encryption.keyPair || !this.encryption.remotePublicKey) return;
+  async deriveSessionKey(state = this.encryption) {
+    if (!this.isCurrentEncryptionState(state) || state.sessionKey ||
+        !state.keyPair || !state.remotePublicKey) return;
+    if (state.derivePromise) {
+      await state.derivePromise;
+      return;
+    }
 
-    this.encryption.sessionKey = await crypto.subtle.deriveKey(
+    const keyPair = state.keyPair;
+    const remotePublicKey = state.remotePublicKey;
+    state.derivePromise = crypto.subtle.deriveKey(
       {
         name: 'ECDH',
-        public: this.encryption.remotePublicKey
+        public: remotePublicKey
       },
-      this.encryption.keyPair.privateKey,
+      keyPair.privateKey,
       { name: 'AES-GCM', length: 256 },
       false,
       ['encrypt', 'decrypt']
     );
 
-    this.encryption.resolveReady?.(this.encryption.sessionKey);
-    console.info('[AirDows] Application encryption ready: AES-GCM-256');
+    try {
+      const sessionKey = await state.derivePromise;
+      if (!this.isCurrentEncryptionState(state) ||
+          state.keyPair !== keyPair ||
+          state.remotePublicKey !== remotePublicKey) return;
+
+      state.sessionKey = sessionKey;
+      state.resolveReady?.(sessionKey);
+      console.info('[AirDows] Application encryption ready: AES-GCM-256');
+    } finally {
+      if (this.isCurrentEncryptionState(state)) {
+        state.derivePromise = null;
+      }
+    }
   }
 
   async waitForEncryption() {
-    if (!this.encryption.available) return null;
-    if (this.encryption.sessionKey) return this.encryption.sessionKey;
+    const state = this.encryption;
+    if (!state.available) return null;
+    if (state.sessionKey) return state.sessionKey;
 
     const timeout = new Promise((_, reject) => {
       setTimeout(() => reject(new Error('No se pudo negociar la clave de cifrado.')), 10000);
     });
 
-    return Promise.race([this.encryption.ready, timeout]);
+    const sessionKey = await Promise.race([this.ensureEncryptionReadyPromise(state), timeout]);
+    if (!this.isCurrentEncryptionState(state)) {
+      const error = new Error('The encryption session was replaced.');
+      error.code = 'ENCRYPTION_SESSION_REPLACED';
+      throw error;
+    }
+    return sessionKey;
   }
 
   async encryptChunk(data) {
@@ -1715,6 +1780,7 @@ class WebRTCManager {
   startNewPairingSession() {
     this.clearNegotiationDeadline();
     this.sessionGeneration += 1;
+    this.resetEncryptionSession();
     this.negotiationActive = false;
     this.restartRequestCounter = 0;
     this.handledRestartRequests.clear();
@@ -2292,7 +2358,7 @@ class WebRTCManager {
     this.completedTransferIds.clear();
     this.handledRestartRequests.clear();
     this.incomingMessageChain = Promise.resolve();
-    this.encryption = this.createEncryptionState();
+    this.resetEncryptionSession();
     this.receiverState = this.createEmptyReceiverState();
   }
 
