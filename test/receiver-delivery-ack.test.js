@@ -67,6 +67,7 @@ class FakeDataChannel {
 function createManager(options = {}) {
   const manager = new WebRTCManager({}, {
     deliveryAckTimeout: options.deliveryAckTimeout || 100,
+    deliveryTerminalSendTimeout: options.deliveryTerminalSendTimeout,
     deliveryAckRetryInterval: options.deliveryAckRetryInterval || 20,
     deliveryAckCooldown: options.deliveryAckCooldown || 2,
     deliveryAckNow: options.deliveryAckNow
@@ -183,6 +184,176 @@ test('sender completes after one matching transfer-ack', async () => {
   await waitForControl(channel, 'transfer-finished');
   await manager.handleIncomingTextMessage(JSON.stringify({ type: 'transfer-ack', transferId, size: file.size }));
   await promise;
+});
+
+test('ACK deadline does not start while transfer-finished is delayed by backpressure', async () => {
+  const manager = createManager({
+    deliveryAckTimeout: 5,
+    deliveryTerminalSendTimeout: 100
+  });
+  const file = createFile([], 'empty.bin');
+  const transferId = 'backpressured-terminal';
+  let channel;
+  channel = new FakeDataChannel((data) => {
+    if (typeof data !== 'string') return;
+    const message = JSON.parse(data);
+    if (message.type === 'metadata') {
+      channel.bufferedAmount = 2048;
+      setImmediate(() => manager.handleIncomingTextMessage(JSON.stringify({
+        type: 'receiver-ready',
+        transferId,
+        offset: 0,
+        size: 0
+      })));
+    } else if (message.type === 'transfer-finished') {
+      manager.handleTransferAck({ type: 'transfer-ack', transferId, size: 0 });
+    }
+  });
+  manager.setDataChannel(channel);
+  const promise = manager.sendFile(file, { transferId });
+
+  for (let attempt = 0; attempt < 50 && !manager.deliveryWaiters.has(transferId); attempt += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.equal(manager.deliveryWaiters.has(transferId), true);
+  assert.equal(manager.deliveryWaiters.get(transferId).timeout, null);
+  await new Promise((resolve) => setTimeout(resolve, 15));
+  assert.equal(manager.deliveryWaiters.get(transferId).timeout, null);
+
+  channel.bufferedAmount = 0;
+  channel.emit('bufferedamountlow');
+  await promise;
+  assert.equal(manager.deliveryWaiters.size, 0);
+});
+
+test('an immediate ACK after terminal send settles the registered waiter safely', async () => {
+  const manager = createManager({ deliveryAckTimeout: 5 });
+  const file = createFile([], 'empty.bin');
+  const transferId = 'immediate-terminal-ack';
+  let completions = 0;
+  let channel;
+  channel = new FakeDataChannel((data) => {
+    if (typeof data !== 'string') return;
+    const message = JSON.parse(data);
+    if (message.type === 'metadata') {
+      setImmediate(() => manager.handleIncomingTextMessage(JSON.stringify({
+        type: 'receiver-ready',
+        transferId,
+        offset: 0,
+        size: 0
+      })));
+    } else if (message.type === 'transfer-finished') {
+      assert.equal(manager.deliveryWaiters.has(transferId), true);
+      manager.handleTransferAck({ type: 'transfer-ack', transferId, size: 0 });
+    }
+  });
+  manager.onFileTransferComplete = () => { completions += 1; };
+  manager.setDataChannel(channel);
+
+  await manager.sendFile(file, { transferId });
+  assert.equal(completions, 1);
+  assert.equal(manager.deliveryWaiters.size, 0);
+});
+
+test('terminal send failure rejects separately from an ACK timeout', async () => {
+  const manager = createManager({
+    deliveryAckTimeout: 1000,
+    deliveryTerminalSendTimeout: 100
+  });
+  const file = createFile([], 'empty.bin');
+  const transferId = 'terminal-send-failure';
+  let channel;
+  channel = new FakeDataChannel((data) => {
+    if (typeof data !== 'string') return;
+    const message = JSON.parse(data);
+    if (message.type === 'metadata') {
+      setImmediate(() => manager.handleIncomingTextMessage(JSON.stringify({
+        type: 'receiver-ready',
+        transferId,
+        offset: 0,
+        size: 0
+      })));
+    }
+  });
+  const send = channel.send.bind(channel);
+  channel.send = (data) => {
+    if (typeof data === 'string' && JSON.parse(data).type === 'transfer-finished') {
+      throw new Error('synthetic terminal send failure');
+    }
+    return send(data);
+  };
+  manager.setDataChannel(channel);
+
+  await assert.rejects(
+    manager.sendFile(file, { transferId }),
+    { code: 'DELIVERY_TERMINAL_SEND_FAILED' }
+  );
+  assert.equal(manager.deliveryWaiters.size, 0);
+});
+
+test('congested terminal timeout runs sender failure cleanup exactly once', async () => {
+  const manager = createManager({
+    deliveryAckTimeout: 1000,
+    deliveryTerminalSendTimeout: 20,
+    deliveryAckRetryInterval: 5
+  });
+  const file = createFile([], 'empty.bin');
+  const transferId = 'terminal-send-timeout';
+  let failureCallbacks = 0;
+  let wakeLockHeld = true;
+  let uiState = 'sending';
+  let callbackTerminalState = null;
+  let channel;
+  channel = new FakeDataChannel((data) => {
+    if (typeof data !== 'string') return;
+    const message = JSON.parse(data);
+    if (message.type === 'metadata') {
+      channel.bufferedAmount = 2048;
+      setImmediate(() => manager.handleIncomingTextMessage(JSON.stringify({
+        type: 'receiver-ready',
+        transferId,
+        offset: 0,
+        size: 0
+      })));
+    }
+  });
+  manager.reportTransferError = WebRTCManager.prototype.reportTransferError.bind(manager);
+  manager.onTransferError = () => {
+    failureCallbacks += 1;
+    callbackTerminalState = manager.activeSendTransfer?.terminalState || null;
+    wakeLockHeld = false;
+    uiState = 'ready';
+  };
+  manager.setDataChannel(channel);
+  const promise = manager.sendFile(file, { transferId });
+
+  for (let attempt = 0; attempt < 50 && !manager.deliveryWaiters.has(transferId); attempt += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  const waiter = manager.deliveryWaiters.get(transferId);
+  assert.ok(waiter);
+  await assert.rejects(
+    promise,
+    { code: 'DELIVERY_TERMINAL_SEND_TIMEOUT' }
+  );
+  assert.equal(failureCallbacks, 1);
+  assert.equal(callbackTerminalState, 'failed');
+  assert.equal(wakeLockHeld, false);
+  assert.equal(uiState, 'ready');
+  assert.equal(waiter.settled, true);
+  assert.equal(waiter.timeout, null);
+  assert.equal(waiter.retryTimeout, null);
+  assert.equal(waiter.retryAbortController.signal.aborted, true);
+  assert.equal(manager.deliveryWaiters.size, 0);
+  assert.equal(manager.activeSendTransfer, null);
+  assert.equal(controlMessages(channel, 'transfer-finished').length, 0);
+
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  channel.close();
+  if (channel.onerror) channel.onerror(new Error('late synthetic channel error'));
+  assert.equal(failureCallbacks, 1);
+  assert.equal(manager.deliveryWaiters.size, 0);
+  assert.equal(manager.activeSendTransfer, null);
 });
 
 test('sender retries transfer-finished when the first delivery ACK is lost', async () => {
@@ -360,15 +531,18 @@ test('late ACK after cancellation is ignored', async () => {
 test('late ACK after timeout is ignored', async () => {
   const manager = createManager({ deliveryAckTimeout: 5 });
   const promise = manager.createDeliveryWaiter('late-timeout', 1);
+  manager.armDeliveryAckTimeout('late-timeout');
   await assert.rejects(promise, { code: 'DELIVERY_ACK_TIMEOUT' });
+  assert.equal(manager.handleTransferAck({ type: 'transfer-ack', transferId: 'late-timeout', size: 1 }), false);
   assert.equal(manager.handleTransferAck({ type: 'transfer-ack', transferId: 'late-timeout', size: 1 }), false);
 });
 
 test('ACK timeout rejects sendFile with DELIVERY_ACK_TIMEOUT', async () => {
-  const { manager, channel, file, transferId, promise } = startSender({ deliveryAckTimeout: 5 });
+  const { manager, channel, file, transferId, promise } = startSender({ deliveryAckTimeout: 20 });
   let completions = 0;
   manager.onFileTransferComplete = () => { completions += 1; };
   await waitForControl(channel, 'transfer-finished');
+  assert.ok(manager.deliveryWaiters.get(transferId)?.timeout);
   const transfer = manager.activeSendTransfer;
   await assert.rejects(promise, { code: 'DELIVERY_ACK_TIMEOUT' });
   assert.equal(manager.handleTransferAck({ type: 'transfer-ack', transferId, size: file.size }), false);
@@ -541,6 +715,7 @@ test('replacing a data channel rejects obsolete ACK waiters', async () => {
 test('local cancellation while awaiting ACK rejects immediately', async () => {
   const { manager, channel, promise } = startSender({ deliveryAckTimeout: 1000 });
   await waitForControl(channel, 'transfer-finished');
+  assert.ok(manager.deliveryWaiters.get('transfer-test')?.timeout);
   assert.equal(manager.cancelActiveTransfer(), true);
   await assert.rejects(promise, { name: 'TransferCancelledError' });
   assert.equal(manager.deliveryWaiters.size, 0);
