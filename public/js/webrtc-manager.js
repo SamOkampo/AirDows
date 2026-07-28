@@ -86,6 +86,8 @@ class WebRTCManager {
 
     this.diagnosticsInterval = null;
     this.diagnosticsTransfer = null;
+    this.diagnosticsState = null;
+    this.diagnosticsGeneration = 0;
     this.lastDiagnosticsBytes = 0;
     this.lastDiagnosticsTimestamp = 0;
     this.lastDiagnosticsMetrics = null;
@@ -1117,10 +1119,11 @@ class WebRTCManager {
     }
 
     this.startNetworkDiagnostics({
+      transferId: metadata.transferId,
       direction: 'receive',
       fileName: metadata.name,
       totalBytes: metadata.size,
-      getBytesTransferred: () => this.receiverState.receivedSize
+      getBytesTransferred: () => nextState.receivedSize
     });
   }
 
@@ -1768,6 +1771,7 @@ class WebRTCManager {
       }
 
       this.startNetworkDiagnostics({
+        transferId: transfer.transferId,
         direction: 'send',
         fileName: file.name,
         totalBytes: file.size,
@@ -2322,61 +2326,93 @@ class WebRTCManager {
   startNetworkDiagnostics(transferInfo) {
     this.stopNetworkDiagnostics();
 
-    this.diagnosticsTransfer = transferInfo;
-    this.lastDiagnosticsBytes = transferInfo.getBytesTransferred();
-    this.lastDiagnosticsTimestamp = performance.now();
+    const context = Object.freeze({
+      generation: ++this.diagnosticsGeneration,
+      transferId: transferInfo.transferId,
+      direction: transferInfo.direction,
+      fileName: transferInfo.fileName,
+      totalBytes: transferInfo.totalBytes,
+      getBytesTransferred: transferInfo.getBytesTransferred,
+      peerConnection: this.peerConnection
+    });
+    const state = {
+      context,
+      lastBytes: context.getBytesTransferred(),
+      lastTimestamp: performance.now(),
+      nextRead: 0,
+      lastAppliedRead: 0
+    };
+    this.diagnosticsTransfer = context;
+    this.diagnosticsState = state;
+    this.lastDiagnosticsBytes = state.lastBytes;
+    this.lastDiagnosticsTimestamp = state.lastTimestamp;
 
-    this.emitNetworkDiagnostics().catch((err) => {
+    this.emitNetworkDiagnostics(context).catch((err) => {
       console.warn('Initial WebRTC diagnostics failed:', err);
     });
 
     this.diagnosticsInterval = setInterval(() => {
-      this.emitNetworkDiagnostics().catch((err) => {
+      this.emitNetworkDiagnostics(context).catch((err) => {
         console.warn('WebRTC diagnostics failed:', err);
       });
     }, 2000);
   }
 
   stopNetworkDiagnostics() {
+    this.diagnosticsGeneration += 1;
     if (this.diagnosticsInterval) {
       clearInterval(this.diagnosticsInterval);
       this.diagnosticsInterval = null;
     }
 
     this.diagnosticsTransfer = null;
+    this.diagnosticsState = null;
     this.lastDiagnosticsBytes = 0;
     this.lastDiagnosticsTimestamp = 0;
   }
 
-  async emitNetworkDiagnostics() {
-    if (!this.peerConnection || !this.diagnosticsTransfer || !this.onNetworkDiagnostics) return;
+  async emitNetworkDiagnostics(context = this.diagnosticsTransfer) {
+    const state = this.diagnosticsState;
+    if (!context || !state || state.context !== context ||
+        context.generation !== this.diagnosticsGeneration ||
+        !context.peerConnection || !this.onNetworkDiagnostics) {
+      return false;
+    }
 
     const now = performance.now();
-    const bytesTransferred = this.diagnosticsTransfer.getBytesTransferred();
-    const elapsedSeconds = Math.max((now - this.lastDiagnosticsTimestamp) / 1000, 0.001);
-    const speed = Math.max((bytesTransferred - this.lastDiagnosticsBytes) / elapsedSeconds, 0);
-    const percent = this.diagnosticsTransfer.totalBytes > 0
-      ? Math.min(100, (bytesTransferred / this.diagnosticsTransfer.totalBytes) * 100)
+    const bytesTransferred = context.getBytesTransferred();
+    const read = ++state.nextRead;
+    const connection = await this.getActiveCandidatePairDetails(context.peerConnection);
+    if (this.diagnosticsState !== state ||
+        this.diagnosticsTransfer !== context ||
+        context.generation !== this.diagnosticsGeneration ||
+        read <= state.lastAppliedRead) {
+      return false;
+    }
+
+    const elapsedSeconds = Math.max((now - state.lastTimestamp) / 1000, 0.001);
+    const speed = Math.max((bytesTransferred - state.lastBytes) / elapsedSeconds, 0);
+    const percent = context.totalBytes > 0
+      ? Math.min(100, (bytesTransferred / context.totalBytes) * 100)
       : 0;
 
-    const connection = await this.getActiveCandidatePairDetails();
     const metrics = {
       connectionType: connection.connectionType,
       speed,
       qualityLabel: this.getQualityLabel(connection.connectionType, speed),
       isLocal: connection.connectionType === 'host',
       percent,
-      direction: this.diagnosticsTransfer.direction,
-      fileName: this.diagnosticsTransfer.fileName
+      direction: context.direction,
+      fileName: context.fileName
     };
 
     this.transferDiagnostics.bytesTransferred = bytesTransferred;
-    this.transferDiagnostics.totalBytes = this.diagnosticsTransfer.totalBytes;
+    this.transferDiagnostics.totalBytes = context.totalBytes;
     this.transferDiagnostics.percent = percent;
     this.transferDiagnostics.speedBytesPerSecond = speed;
     this.transferDiagnostics.speedMBps = speed / (1024 * 1024);
-    this.transferDiagnostics.direction = this.diagnosticsTransfer.direction;
-    this.transferDiagnostics.fileName = this.diagnosticsTransfer.fileName;
+    this.transferDiagnostics.direction = context.direction;
+    this.transferDiagnostics.fileName = context.fileName;
     this.transferDiagnostics.updatedAt = new Date().toISOString();
 
     console.info('[AirDows] Transfer metrics', {
@@ -2387,10 +2423,14 @@ class WebRTCManager {
       bytes: `${bytesTransferred}/${this.transferDiagnostics.totalBytes}`
     });
 
-    this.lastDiagnosticsBytes = bytesTransferred;
-    this.lastDiagnosticsTimestamp = now;
+    state.lastAppliedRead = read;
+    state.lastBytes = bytesTransferred;
+    state.lastTimestamp = now;
+    this.lastDiagnosticsBytes = state.lastBytes;
+    this.lastDiagnosticsTimestamp = state.lastTimestamp;
     this.lastDiagnosticsMetrics = metrics;
     this.onNetworkDiagnostics(metrics);
+    return true;
   }
 
   calculatePercent(bytesTransferred, totalBytes) {
@@ -2412,16 +2452,16 @@ class WebRTCManager {
     }
   }
 
-  async getActiveCandidatePairDetails() {
+  async getActiveCandidatePairDetails(peerConnection = this.peerConnection) {
     const fallback = {
       connectionType: 'unknown',
       localCandidateType: 'unknown',
       remoteCandidateType: 'unknown'
     };
 
-    if (!this.peerConnection) return fallback;
+    if (!peerConnection) return fallback;
 
-    const stats = await this.peerConnection.getStats();
+    const stats = await peerConnection.getStats();
     let activePair = null;
 
     stats.forEach((report) => {
