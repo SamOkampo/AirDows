@@ -9,6 +9,9 @@ class WebRTCManager {
     this.DELIVERY_ACK_TIMEOUT = Number.isSafeInteger(options.deliveryAckTimeout)
       ? Math.max(1, options.deliveryAckTimeout)
       : 30000;
+    this.DELIVERY_TERMINAL_SEND_TIMEOUT = Number.isSafeInteger(options.deliveryTerminalSendTimeout)
+      ? Math.max(1, options.deliveryTerminalSendTimeout)
+      : 15000;
     this.DELIVERY_ACK_RETRY_INTERVAL = Number.isSafeInteger(options.deliveryAckRetryInterval)
       ? Math.max(1, options.deliveryAckRetryInterval)
       : 2000;
@@ -1124,18 +1127,71 @@ class WebRTCManager {
         retryAbortController: new AbortController()
       };
 
-      waiter.timeout = setTimeout(() => {
-        this.settleDeliveryWaiter(
-          transferId,
-          'reject',
-          this.createDeliveryError('DELIVERY_ACK_TIMEOUT', 'Delivery confirmation timed out.'),
-          'failed'
-        );
-      }, this.DELIVERY_ACK_TIMEOUT);
-      if (typeof waiter.timeout.unref === 'function') waiter.timeout.unref();
-
       this.deliveryWaiters.set(transferId, waiter);
     });
+  }
+
+  armDeliveryAckTimeout(transferId) {
+    const waiter = this.deliveryWaiters.get(transferId);
+    if (!waiter || waiter.settled || waiter.timeout) return false;
+
+    waiter.timeout = setTimeout(() => {
+      this.settleDeliveryWaiter(
+        transferId,
+        'reject',
+        this.createDeliveryError('DELIVERY_ACK_TIMEOUT', 'Delivery confirmation timed out.'),
+        'failed'
+      );
+    }, this.DELIVERY_ACK_TIMEOUT);
+    if (typeof waiter.timeout.unref === 'function') waiter.timeout.unref();
+    return true;
+  }
+
+  async sendDeliveryTerminal(data, highWaterMark, transfer) {
+    const terminalController = new AbortController();
+    const transferSignal = transfer && transfer.abortController
+      ? transfer.abortController.signal
+      : null;
+    let timedOut = false;
+    const abortTerminalSend = () => terminalController.abort();
+
+    if (transferSignal) {
+      if (transferSignal.aborted) {
+        terminalController.abort();
+      } else {
+        transferSignal.addEventListener('abort', abortTerminalSend, { once: true });
+      }
+    }
+
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      terminalController.abort();
+    }, this.DELIVERY_TERMINAL_SEND_TIMEOUT);
+    if (typeof timeout.unref === 'function') timeout.unref();
+
+    try {
+      await this.sendWithBackpressure(data, highWaterMark, terminalController.signal);
+    } catch (err) {
+      if (timedOut) {
+        throw this.createDeliveryError(
+          'DELIVERY_TERMINAL_SEND_TIMEOUT',
+          'Data connection stalled before delivery confirmation could be requested.'
+        );
+      }
+      if (transferSignal && transferSignal.aborted) throw err;
+
+      const terminalError = this.createDeliveryError(
+        'DELIVERY_TERMINAL_SEND_FAILED',
+        'Data connection failed while requesting delivery confirmation.'
+      );
+      terminalError.cause = err;
+      throw terminalError;
+    } finally {
+      clearTimeout(timeout);
+      if (transferSignal) {
+        transferSignal.removeEventListener('abort', abortTerminalSend);
+      }
+    }
   }
 
   startDeliveryRetry(transferId, retry) {
@@ -1381,16 +1437,17 @@ class WebRTCManager {
       };
 
       try {
-        await this.sendWithBackpressure(
+        await this.sendDeliveryTerminal(
           JSON.stringify(finishedMessage),
           BUFFER_THRESHOLD,
-          transfer.abortController.signal
+          transfer
         );
       } catch (err) {
         this.rejectDeliveryWaiter(transfer.transferId, err);
         throw err;
       }
 
+      this.armDeliveryAckTimeout(transfer.transferId);
       this.startDeliveryRetry(
         transfer.transferId,
         (retrySignal) => this.sendWithBackpressure(
