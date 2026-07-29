@@ -2166,6 +2166,7 @@ class WebRTCManager {
 
   startNetworkDiagnostics(transferInfo) {
     this.stopNetworkDiagnostics();
+    if (!this.hasNetworkDiagnosticsConsumer()) return false;
 
     this.diagnosticsTransfer = transferInfo;
     this.lastDiagnosticsBytes = transferInfo.getBytesTransferred();
@@ -2180,6 +2181,12 @@ class WebRTCManager {
         console.warn('WebRTC diagnostics failed:', err);
       });
     }, 2000);
+    return true;
+  }
+
+  hasNetworkDiagnosticsConsumer() {
+    return typeof this.onNetworkDiagnostics === 'function' ||
+      Boolean(this.performanceDiagnostics);
   }
 
   stopNetworkDiagnostics() {
@@ -2195,6 +2202,10 @@ class WebRTCManager {
   }
 
   async emitNetworkDiagnostics() {
+    if (!this.hasNetworkDiagnosticsConsumer()) {
+      this.stopNetworkDiagnostics();
+      return;
+    }
     if (!this.peerConnection || !this.diagnosticsTransfer) return;
 
     const diagnosticsTransfer = this.diagnosticsTransfer;
@@ -2209,7 +2220,8 @@ class WebRTCManager {
 
     const connection = await this.getActiveCandidatePairDetails();
     if (this.diagnosticsTransfer !== diagnosticsTransfer ||
-        this.diagnosticsGeneration !== diagnosticsGeneration) return;
+        this.diagnosticsGeneration !== diagnosticsGeneration ||
+        !this.hasNetworkDiagnosticsConsumer()) return;
 
     const metrics = {
       connectionType: connection.connectionType,

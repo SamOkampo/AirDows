@@ -594,3 +594,129 @@ test('throwing diagnostic hooks cannot change a DataChannel send', async () => {
   };
   assert.doesNotThrow(() => manager.recordPerformance('markAckReceived', 'opaque-id'));
 });
+
+test('network diagnostics do not inspect WebRTC stats without a consumer', async () => {
+  const manager = new WebRTCManager({});
+  let statsInspections = 0;
+  let metricLogs = 0;
+  const originalInfo = console.info;
+  manager.peerConnection = {};
+  manager.getActiveCandidatePairDetails = async () => {
+    statsInspections += 1;
+    return { connectionType: 'host' };
+  };
+  console.info = (...args) => {
+    if (args[0] === '[AirDows] Transfer metrics') metricLogs += 1;
+  };
+
+  try {
+    assert.equal(manager.startNetworkDiagnostics({
+      transferId: 'transfer',
+      direction: 'send',
+      totalBytes: 10,
+      getBytesTransferred: () => 1
+    }), false);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(statsInspections, 0);
+    assert.equal(metricLogs, 0);
+    assert.equal(manager.diagnosticsInterval, null);
+    assert.equal(manager.diagnosticsTransfer, null);
+  } finally {
+    console.info = originalInfo;
+    manager.stopNetworkDiagnostics();
+  }
+});
+
+test('UI network diagnostics callback keeps periodic measurement active', async () => {
+  const manager = new WebRTCManager({});
+  const received = [];
+  let statsInspections = 0;
+  manager.peerConnection = {};
+  manager.onNetworkDiagnostics = (metrics) => received.push(metrics);
+  manager.getActiveCandidatePairDetails = async () => {
+    statsInspections += 1;
+    return { connectionType: 'host' };
+  };
+
+  try {
+    assert.equal(manager.startNetworkDiagnostics({
+      transferId: 'transfer',
+      direction: 'send',
+      totalBytes: 10,
+      getBytesTransferred: () => 5
+    }), true);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(statsInspections, 1);
+    assert.equal(received.length, 1);
+    assert.equal(received[0].connectionType, 'host');
+    assert.notEqual(manager.diagnosticsInterval, null);
+  } finally {
+    manager.stopNetworkDiagnostics();
+  }
+});
+
+test('opt-in performance diagnostics measure route without a UI callback', async () => {
+  const manager = new WebRTCManager({}, {
+    performanceDiagnosticsEnabled: true
+  });
+  let statsInspections = 0;
+  manager.peerConnection = {};
+  manager.getActiveCandidatePairDetails = async () => {
+    statsInspections += 1;
+    return { connectionType: 'relay' };
+  };
+  manager.performanceDiagnostics.startTransfer({
+    transferId: 'transfer',
+    generation: 1,
+    direction: 'send',
+    totalBytes: 10
+  });
+
+  try {
+    assert.equal(manager.startNetworkDiagnostics({
+      transferId: 'transfer',
+      direction: 'send',
+      totalBytes: 10,
+      getBytesTransferred: () => 5
+    }), true);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(statsInspections, 1);
+    assert.equal(manager.onNetworkDiagnostics, null);
+    assert.equal(manager.performanceDiagnostics.getActiveTransfer().route, 'relay');
+  } finally {
+    manager.stopNetworkDiagnostics();
+  }
+});
+
+test('a failing performance diagnostic hook cannot reject metric collection', async () => {
+  const manager = new WebRTCManager({});
+  let statsInspections = 0;
+  const originalWarn = console.warn;
+  manager.performanceDiagnostics = {
+    updateTransfer() {
+      throw new Error('synthetic diagnostics failure');
+    }
+  };
+  manager.peerConnection = {};
+  manager.diagnosticsTransfer = {
+    transferId: 'transfer',
+    direction: 'send',
+    totalBytes: 10,
+    getBytesTransferred: () => 5
+  };
+  manager.lastDiagnosticsTimestamp = manager.performanceNow();
+  manager.getActiveCandidatePairDetails = async () => {
+    statsInspections += 1;
+    return { connectionType: 'host' };
+  };
+  console.warn = () => {};
+
+  try {
+    await assert.doesNotReject(() => manager.emitNetworkDiagnostics());
+    assert.equal(statsInspections, 1);
+    assert.equal(manager.lastDiagnosticsMetrics.connectionType, 'host');
+  } finally {
+    console.warn = originalWarn;
+    manager.stopNetworkDiagnostics();
+  }
+});

@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { performance } = require('node:perf_hooks');
 const { test, expect } = require('@playwright/test');
+const { isAllowedE2EUrl } = require('./url-policy.js');
 
 const MEBIBYTE = 1024 * 1024;
 const DATA_CHANNEL_TIMEOUT_MS = 45_000;
@@ -39,7 +40,7 @@ function sanitizeLog(value) {
     .replace(/\b[A-Za-z0-9_-]{32,}\b/g, '[redacted-token]');
 }
 
-function installBrowserLogCapture(page, device, allowedOrigin, entries) {
+function installBrowserLogCapture(page, device, baseURL, entries) {
   page.on('console', (message) => {
     entries.push(`[${device}] [console:${message.type()}] ${sanitizeLog(message.text())}`);
   });
@@ -48,7 +49,7 @@ function installBrowserLogCapture(page, device, allowedOrigin, entries) {
   });
   page.on('requestfailed', (request) => {
     const url = new URL(request.url());
-    if (url.origin !== allowedOrigin) return;
+    if (!isAllowedE2EUrl(url, baseURL)) return;
     entries.push(
       `[${device}] [requestfailed] ${sanitizeLog(url.pathname)} ` +
       `${sanitizeLog(request.failure()?.errorText || 'request failed')}`
@@ -60,18 +61,23 @@ async function createIsolatedDevice(browser, baseURL, device, browserLogs) {
   const context = await browser.newContext({
     acceptDownloads: true
   });
-  const allowedOrigin = new URL(baseURL).origin;
   await context.route('**/*', async (route) => {
-    const requestURL = new URL(route.request().url());
-    if (requestURL.protocol === 'http:' && requestURL.origin === allowedOrigin) {
+    if (isAllowedE2EUrl(route.request().url(), baseURL)) {
       await route.continue();
       return;
     }
     await route.abort();
   });
+  await context.routeWebSocket('**/*', (webSocketRoute) => {
+    if (isAllowedE2EUrl(webSocketRoute.url(), baseURL)) {
+      webSocketRoute.connectToServer();
+      return;
+    }
+    webSocketRoute.close({ code: 1008, reason: 'E2E network isolation' }).catch(() => {});
+  });
 
   const page = await context.newPage();
-  installBrowserLogCapture(page, device, allowedOrigin, browserLogs);
+  installBrowserLogCapture(page, device, baseURL, browserLogs);
   const deviceState = { context, page, traceStarted: false, downloadCount: 0 };
   page.on('download', () => {
     deviceState.downloadCount += 1;

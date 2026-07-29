@@ -4,12 +4,18 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const util = require('node:util');
+const { getEffectivePort } = require('./url-policy.js');
 
 const projectRoot = path.resolve(__dirname, '..');
 const resultsDirectory = path.join(projectRoot, 'test-results');
 const serverLogPath = path.join(resultsDirectory, 'server.log');
-const port = Number.parseInt(process.env.AIRDOWS_E2E_PORT || '43987', 10);
-const baseURL = process.env.AIRDOWS_E2E_BASE_URL || `http://127.0.0.1:${port}`;
+const port = Number.parseInt(process.env.AIRDOWS_E2E_PORT || '', 10);
+const parsedBaseURL = new URL(process.env.AIRDOWS_E2E_BASE_URL || '');
+const baseURL = parsedBaseURL.origin;
+if (!Number.isSafeInteger(port) || port < 1 || port > 65535 ||
+    getEffectivePort(parsedBaseURL) !== port) {
+  throw new Error('The E2E server requires one matching base URL and available port.');
+}
 
 fs.mkdirSync(resultsDirectory, { recursive: true });
 fs.writeFileSync(serverLogPath, '', 'utf8');
