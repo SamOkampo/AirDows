@@ -110,6 +110,20 @@ async function waitForControl(channel, type) {
   throw new Error(`Timed out waiting for ${type}`);
 }
 
+async function waitWithReferencedTimeout(promise, timeoutMs, message) {
+  let timeout = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+      })
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
 function startSender(options = {}) {
   const manager = createManager(options);
   const channel = new FakeDataChannel((data) => {
@@ -464,7 +478,11 @@ test('lost first ACK after receiver finalization is recovered without duplicate 
   sender.onFileTransferComplete = () => { senderCompletions += 1; };
   receiver.onFileTransferComplete = () => { receiverCompletions += 1; };
 
-  await sender.sendFile(createFile(), { transferId: 'lost-first-ack' });
+  await waitWithReferencedTimeout(
+    sender.sendFile(createFile(), { transferId: 'lost-first-ack' }),
+    150,
+    'Timed out waiting for transfer-finished retry after the first ACK was dropped.'
+  );
 
   assert.equal(droppedAcks, 1);
   assert.equal(senderCompletions, 1);
