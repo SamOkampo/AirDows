@@ -232,8 +232,6 @@ document.addEventListener('DOMContentLoaded', () => {
   let activeTransferMode = 'idle';
   let transferIsActive = false;
   let wakeLock = null;
-  let wakeLockRequest = null;
-  let wakeLockGeneration = 0;
   let sharedFilesPending = [];
   let p2pConnected = false;
   let deferredInstallPrompt = null;
@@ -466,73 +464,28 @@ document.addEventListener('DOMContentLoaded', () => {
     networkHealthSample = null;
   }
 
-  function beginTransferWakeLock() {
-    wakeLockGeneration += 1;
-    const previousLock = wakeLock;
-    wakeLock = null;
-    if (previousLock) {
-      previousLock.sentinel.release().catch(() => {});
-    }
-    acquireTransferWakeLock(wakeLockGeneration);
-    return wakeLockGeneration;
-  }
+  async function acquireTransferWakeLock() {
+    if (!('wakeLock' in navigator) || wakeLock) return;
 
-  async function acquireTransferWakeLock(generation = wakeLockGeneration) {
-    if (!('wakeLock' in navigator) || !transferIsActive ||
-        generation !== wakeLockGeneration) return false;
-    if (wakeLock && wakeLock.generation === generation) return true;
-    if (wakeLockRequest && wakeLockRequest.generation === generation) {
-      return wakeLockRequest.promise;
-    }
-
-    const request = {
-      generation,
-      promise: null
-    };
-    request.promise = (async () => {
-      let sentinel = null;
-      try {
-        sentinel = await navigator.wakeLock.request('screen');
-        if (!transferIsActive || generation !== wakeLockGeneration) {
-          await sentinel.release().catch(() => {});
-          return false;
-        }
-
-        const heldLock = { generation, sentinel };
-        wakeLock = heldLock;
-        sentinel.addEventListener('release', () => {
-          if (wakeLock === heldLock) {
-            wakeLock = null;
-          }
-        });
-        return true;
-      } catch (error) {
-        if (generation === wakeLockGeneration) {
-          console.info('Wake Lock unavailable:', error.message);
-        }
-        return false;
-      } finally {
-        if (wakeLockRequest === request) {
-          wakeLockRequest = null;
-        }
-      }
-    })();
-    wakeLockRequest = request;
-    return request.promise;
-  }
-
-  async function releaseTransferWakeLock(generation = wakeLockGeneration) {
-    if (generation !== wakeLockGeneration) return false;
-    wakeLockGeneration += 1;
-    const heldLock = wakeLock;
-    wakeLock = null;
-    if (!heldLock || heldLock.generation !== generation) return true;
     try {
-      await heldLock.sentinel.release();
+      wakeLock = await navigator.wakeLock.request('screen');
+      wakeLock.addEventListener('release', () => {
+        wakeLock = null;
+      });
+    } catch (error) {
+      console.info('Wake Lock unavailable:', error.message);
+    }
+  }
+
+  async function releaseTransferWakeLock() {
+    if (!wakeLock) return;
+    try {
+      await wakeLock.release();
     } catch (error) {
       console.info('Wake Lock release failed:', error.message);
+    } finally {
+      wakeLock = null;
     }
-    return true;
   }
 
   function setNativeTransferKeepAlive(active) {
@@ -1177,7 +1130,7 @@ document.addEventListener('DOMContentLoaded', () => {
     receivedBlobUrls.clear();
     activeTransferMode = options.writeMode || 'send';
     transferIsActive = true;
-    beginTransferWakeLock();
+    acquireTransferWakeLock();
     setNativeTransferKeepAlive(true);
     beginNetworkHealthSample(isSending, options);
     lastTrackedRoute = 'unknown';

@@ -9,9 +9,6 @@ class WebRTCManager {
     this.DELIVERY_ACK_TIMEOUT = Number.isSafeInteger(options.deliveryAckTimeout)
       ? Math.max(1, options.deliveryAckTimeout)
       : 30000;
-    this.DELIVERY_UNCERTAIN_TIMEOUT = Number.isSafeInteger(options.deliveryUncertainTimeout)
-      ? Math.max(1, options.deliveryUncertainTimeout)
-      : 15000;
     this.DELIVERY_TERMINAL_SEND_TIMEOUT = Number.isSafeInteger(options.deliveryTerminalSendTimeout)
       ? Math.max(1, options.deliveryTerminalSendTimeout)
       : 15000;
@@ -24,16 +21,6 @@ class WebRTCManager {
     this.RTC_TRANSFER_STALL_TIMEOUT = Number.isSafeInteger(options.rtcTransferStallTimeout)
       ? Math.max(1, options.rtcTransferStallTimeout)
       : 30000;
-    this.WEBRTC_NEGOTIATION_TIMEOUT = Number.isSafeInteger(options.negotiationTimeout)
-      ? Math.max(1, options.negotiationTimeout)
-      : 15000;
-    this.negotiationSetTimeout = options.setTimeoutFn || setTimeout;
-    this.negotiationClearTimeout = options.clearTimeoutFn || clearTimeout;
-    this.ENCRYPTION_HANDSHAKE_TIMEOUT = Number.isSafeInteger(options.encryptionHandshakeTimeout)
-      ? Math.max(1, options.encryptionHandshakeTimeout)
-      : 10000;
-    this.encryptionSetTimeout = options.encryptionSetTimeoutFn || setTimeout;
-    this.encryptionClearTimeout = options.encryptionClearTimeoutFn || clearTimeout;
     this.deliveryAckNow = typeof options.deliveryAckNow === 'function'
       ? options.deliveryAckNow
       : Date.now;
@@ -68,7 +55,6 @@ class WebRTCManager {
     this.activeSendTransfer = null;
     this.resumeWaiters = new Map();
     this.deliveryWaiters = new Map();
-    this.uncertainDelivery = null;
     this.completedTransfers = new Map();
     this.completedTransferIds = new Set();
     this.MAX_COMPLETED_TRANSFER_RECEIPTS = 128;
@@ -76,22 +62,12 @@ class WebRTCManager {
     this.dataChannelGeneration = 0;
     this.peerConnectionGeneration = 0;
     this.recoveryPrepared = false;
-    this.negotiationActive = false;
-    this.negotiationTimer = null;
-    this.negotiationTimerGeneration = 0;
-    this.lastNegotiationError = null;
-    this.restartRequestCounter = 0;
-    this.handledRestartRequests = new Set();
-    this.MAX_HANDLED_RESTART_REQUESTS = 64;
-    this.encryptionGeneration = 0;
     this.encryption = this.createEncryptionState();
     this.relayBudget = { plan: 'free', limitBytes: Number.POSITIVE_INFINITY, usedBytes: 0, blocked: false };
     this.pendingRelayUsageBytes = 0;
 
     this.diagnosticsInterval = null;
     this.diagnosticsTransfer = null;
-    this.diagnosticsState = null;
-    this.diagnosticsGeneration = 0;
     this.lastDiagnosticsBytes = 0;
     this.lastDiagnosticsTimestamp = 0;
     this.lastDiagnosticsMetrics = null;
@@ -124,9 +100,6 @@ class WebRTCManager {
       writeFailed: false,
       memoryChunkCount: 0,
       finalizing: false,
-      finalizationPromise: null,
-      diskCloseStarted: false,
-      completionRecorded: false,
       terminalState: null,
       sessionGeneration: this.sessionGeneration
     };
@@ -134,88 +107,14 @@ class WebRTCManager {
 
   createEncryptionState() {
     return {
-      generation: this.encryptionGeneration,
       available: typeof crypto !== 'undefined' && Boolean(crypto.subtle),
       keyPair: null,
-      keyPairPromise: null,
-      localPublicKey: null,
-      lastPublicKeySignalGeneration: null,
       remotePublicKey: null,
-      remotePublicKeyFingerprint: null,
       sessionKey: null,
-      derivePromise: null,
-      waitTimers: new Set(),
       ready: null,
       resolveReady: null,
       rejectReady: null
     };
-  }
-
-  resetEncryptionSession() {
-    const previousState = this.encryption;
-    if (previousState && previousState.waitTimers) {
-      for (const wait of previousState.waitTimers) {
-        this.encryptionClearTimeout(wait.timer);
-        const error = new Error('The encryption session was replaced.');
-        error.code = 'ENCRYPTION_SESSION_REPLACED';
-        wait.reject(error);
-      }
-      previousState.waitTimers.clear();
-    }
-    this.encryptionGeneration += 1;
-    this.encryption = this.createEncryptionState();
-    return this.encryption;
-  }
-
-  isCurrentEncryptionState(state) {
-    return this.encryption === state &&
-      state.generation === this.encryptionGeneration;
-  }
-
-  ensureEncryptionReadyPromise(state = this.encryption) {
-    if (!state.ready) {
-      state.ready = new Promise((resolve, reject) => {
-        state.resolveReady = resolve;
-        state.rejectReady = reject;
-      });
-    }
-    return state.ready;
-  }
-
-  getCryptoPublicKeyFingerprint(publicKeyJwk) {
-    if (!publicKeyJwk || typeof publicKeyJwk !== 'object') return null;
-    const { kty, crv, x, y } = publicKeyJwk;
-    if (![kty, crv, x, y].every((value) => typeof value === 'string' && value.length > 0)) {
-      return null;
-    }
-    return JSON.stringify({ kty, crv, x, y });
-  }
-
-  sendEncryptionPublicKey(state = this.encryption) {
-    if (!this.isCurrentEncryptionState(state) || state.sessionKey || !state.localPublicKey) {
-      return false;
-    }
-    if (state.lastPublicKeySignalGeneration === this.peerConnectionGeneration) {
-      return false;
-    }
-
-    this.socketManager.sendSignal(this.roomCode, {
-      type: 'crypto-key',
-      publicKey: state.localPublicKey
-    });
-    state.lastPublicKeySignalGeneration = this.peerConnectionGeneration;
-    return true;
-  }
-
-  resumeEncryptionHandshake() {
-    const state = this.encryption;
-    if (!state.available || state.sessionKey) return false;
-    this.startEncryptionSession().catch((err) => {
-      if (this.isCurrentEncryptionState(state)) {
-        console.warn('Application encryption handshake could not resume:', err.message);
-      }
-    });
-    return true;
   }
 
   setIceConfig(config) {
@@ -234,7 +133,12 @@ class WebRTCManager {
     this.roomCode = roomCode;
     this.isClosing = false;
     this.recoveryPrepared = false;
-    this.ensureEncryptionReadyPromise();
+    if (!this.encryption.ready) {
+      this.encryption.ready = new Promise((resolve, reject) => {
+        this.encryption.resolveReady = resolve;
+        this.encryption.rejectReady = reject;
+      });
+    }
     this.startEncryptionSession().catch((err) => {
       console.warn('Application encryption unavailable. WebRTC transport encryption remains active:', err.message);
     });
@@ -250,12 +154,9 @@ class WebRTCManager {
   }
 
   createPeerConnection() {
-    this.clearNegotiationDeadline();
     const generation = ++this.peerConnectionGeneration;
     const peerConnection = new RTCPeerConnection(this.rtcConfig);
     this.peerConnection = peerConnection;
-    this.negotiationActive = true;
-    this.armNegotiationDeadline(peerConnection, generation);
 
     peerConnection.onicecandidate = (event) => {
       if (this.peerConnection !== peerConnection || this.peerConnectionGeneration !== generation) return;
@@ -271,13 +172,6 @@ class WebRTCManager {
     peerConnection.onconnectionstatechange = () => {
       if (this.peerConnection !== peerConnection || this.peerConnectionGeneration !== generation) return;
       console.log(`Connection state: ${peerConnection.connectionState}`);
-      if (peerConnection.connectionState === 'connected') {
-        return;
-      }
-      if (['disconnected', 'failed', 'closed'].includes(peerConnection.connectionState)) {
-        this.negotiationActive = false;
-        this.clearNegotiationDeadline(generation);
-      }
       if (this.onConnectionStateChange) {
         this.onConnectionStateChange(peerConnection.connectionState);
       }
@@ -323,25 +217,19 @@ class WebRTCManager {
     }
 
     const channelGeneration = ++this.dataChannelGeneration;
-    const peerGeneration = this.peerConnectionGeneration;
     let terminalEventHandled = false;
-    let openEventHandled = false;
     this.dataChannel = channel;
     this.dataChannel.binaryType = 'arraybuffer';
     this.dataChannel.bufferedAmountLowThreshold = this.BUFFER_LOW_THRESHOLD;
 
     const handleTerminalEvent = (code, message, logMessage) => {
       if (terminalEventHandled || this.dataChannel !== channel ||
-          this.dataChannelGeneration !== channelGeneration ||
-          this.peerConnectionGeneration !== peerGeneration) return false;
+          this.dataChannelGeneration !== channelGeneration) return false;
 
       terminalEventHandled = true;
       this.dataChannelGeneration += 1;
-      this.negotiationActive = false;
-      this.clearNegotiationDeadline(peerGeneration);
       console.log(logMessage);
       this.rejectAllDeliveryWaiters(code, message);
-      this.rejectAllResumeWaiters(code, message);
       this.stopNetworkDiagnostics();
       if (!this.isClosing && this.onConnectionStateChange) {
         try {
@@ -353,20 +241,13 @@ class WebRTCManager {
       return true;
     };
 
-    const handleOpen = () => {
-      if (openEventHandled || this.dataChannel !== channel ||
-          this.dataChannelGeneration !== channelGeneration ||
-          this.peerConnectionGeneration !== peerGeneration) return false;
-      openEventHandled = true;
+    this.dataChannel.onopen = () => {
+      if (this.dataChannel !== channel || this.dataChannelGeneration !== channelGeneration) return;
       console.log('Data channel state is: OPEN');
-      this.negotiationActive = false;
-      this.clearNegotiationDeadline(peerGeneration);
       if (this.onConnectionStateChange) {
         this.onConnectionStateChange('connected');
       }
-      return true;
     };
-    this.dataChannel.onopen = handleOpen;
 
     this.dataChannel.onclose = () => {
       handleTerminalEvent(
@@ -384,12 +265,13 @@ class WebRTCManager {
       );
       if (!handled) return;
       console.error('Data channel error:', error);
+      this.cleanupReceiverDiskStream().catch((err) => {
+        console.error('Error cleaning receiver stream after data channel error:', err);
+      });
     };
 
     this.dataChannel.onmessage = (event) => {
-      if (this.dataChannel !== channel ||
-          this.dataChannelGeneration !== channelGeneration ||
-          this.peerConnectionGeneration !== peerGeneration) return;
+      if (this.dataChannel !== channel || this.dataChannelGeneration !== channelGeneration) return;
       this.enqueueIncomingMessage(event.data, channelGeneration);
     };
   }
@@ -432,57 +314,32 @@ class WebRTCManager {
     if (!message || message.type !== 'metadata') return false;
 
     const current = this.receiverState;
-    const sameTransfer = current.metadata.transferId === message.transferId &&
-      current.metadata.name === message.name &&
-      current.metadata.size === message.size;
-    return Boolean(current.terminalState) || !sameTransfer;
+    return current.finalizing || Boolean(current.terminalState) ||
+      current.metadata.transferId !== message.transferId ||
+      current.metadata.name !== message.name ||
+      current.metadata.size !== message.size;
   }
 
   async startEncryptionSession() {
-    const state = this.encryption;
-    if (!state.available) return;
-    this.ensureEncryptionReadyPromise(state);
+    if (!this.encryption.available || this.encryption.keyPair) return;
 
-    if (!state.keyPair && !state.keyPairPromise) {
-      state.keyPairPromise = (async () => {
-        const keyPair = await crypto.subtle.generateKey(
-          { name: 'ECDH', namedCurve: 'P-256' },
-          false,
-          ['deriveKey']
-        );
-        if (!this.isCurrentEncryptionState(state)) return;
+    this.encryption.keyPair = await crypto.subtle.generateKey(
+      { name: 'ECDH', namedCurve: 'P-256' },
+      false,
+      ['deriveKey']
+    );
 
-        state.keyPair = keyPair;
-        const publicKey = await crypto.subtle.exportKey('jwk', keyPair.publicKey);
-        if (!this.isCurrentEncryptionState(state) || state.keyPair !== keyPair) return;
-        state.localPublicKey = publicKey;
-      })().finally(() => {
-        if (this.isCurrentEncryptionState(state)) {
-          state.keyPairPromise = null;
-        }
-      });
-    }
+    const publicKey = await crypto.subtle.exportKey('jwk', this.encryption.keyPair.publicKey);
+    this.socketManager.sendSignal(this.roomCode, {
+      type: 'crypto-key',
+      publicKey
+    });
 
-    if (state.keyPairPromise) {
-      await state.keyPairPromise;
-    }
-    if (!this.isCurrentEncryptionState(state)) return;
-    this.sendEncryptionPublicKey(state);
-    await this.deriveSessionKey(state);
+    await this.deriveSessionKey();
   }
 
   async acceptRemoteCryptoKey(publicKeyJwk, isCurrentConnection = () => true) {
-    const state = this.encryption;
-    if (!state.available || !publicKeyJwk || typeof publicKeyJwk !== 'object') return;
-    const fingerprint = this.getCryptoPublicKeyFingerprint(publicKeyJwk);
-    if (!fingerprint) return;
-    if (state.remotePublicKeyFingerprint) {
-      if (state.remotePublicKeyFingerprint !== fingerprint) return;
-      await this.startEncryptionSession();
-      if (!isCurrentConnection() || !this.isCurrentEncryptionState(state)) return;
-      await this.deriveSessionKey(state);
-      return;
-    }
+    if (!this.encryption.available || !publicKeyJwk || typeof publicKeyJwk !== 'object') return;
 
     const remotePublicKey = await crypto.subtle.importKey(
       'jwk',
@@ -491,88 +348,41 @@ class WebRTCManager {
       false,
       []
     );
-    if (!isCurrentConnection() || !this.isCurrentEncryptionState(state)) return;
-    if (state.remotePublicKeyFingerprint) {
-      if (state.remotePublicKeyFingerprint !== fingerprint) return;
-      await this.startEncryptionSession();
-      return;
-    }
+    if (!isCurrentConnection()) return;
 
-    state.remotePublicKey = remotePublicKey;
-    state.remotePublicKeyFingerprint = fingerprint;
+    this.encryption.remotePublicKey = remotePublicKey;
     await this.startEncryptionSession();
-    if (!isCurrentConnection() || !this.isCurrentEncryptionState(state)) return;
-    await this.deriveSessionKey(state);
+    if (!isCurrentConnection()) return;
+    await this.deriveSessionKey();
   }
 
-  async deriveSessionKey(state = this.encryption) {
-    if (!this.isCurrentEncryptionState(state) || state.sessionKey ||
-        !state.keyPair || !state.remotePublicKey) return;
-    if (state.derivePromise) {
-      await state.derivePromise;
-      return;
-    }
+  async deriveSessionKey() {
+    if (this.encryption.sessionKey || !this.encryption.keyPair || !this.encryption.remotePublicKey) return;
 
-    const keyPair = state.keyPair;
-    const remotePublicKey = state.remotePublicKey;
-    state.derivePromise = crypto.subtle.deriveKey(
+    this.encryption.sessionKey = await crypto.subtle.deriveKey(
       {
         name: 'ECDH',
-        public: remotePublicKey
+        public: this.encryption.remotePublicKey
       },
-      keyPair.privateKey,
+      this.encryption.keyPair.privateKey,
       { name: 'AES-GCM', length: 256 },
       false,
       ['encrypt', 'decrypt']
     );
 
-    try {
-      const sessionKey = await state.derivePromise;
-      if (!this.isCurrentEncryptionState(state) ||
-          state.keyPair !== keyPair ||
-          state.remotePublicKey !== remotePublicKey) return;
-
-      state.sessionKey = sessionKey;
-      state.resolveReady?.(sessionKey);
-      console.info('[AirDows] Application encryption ready: AES-GCM-256');
-    } finally {
-      if (this.isCurrentEncryptionState(state)) {
-        state.derivePromise = null;
-      }
-    }
+    this.encryption.resolveReady?.(this.encryption.sessionKey);
+    console.info('[AirDows] Application encryption ready: AES-GCM-256');
   }
 
   async waitForEncryption() {
-    const state = this.encryption;
-    if (!state.available) return null;
-    if (state.sessionKey) return state.sessionKey;
+    if (!this.encryption.available) return null;
+    if (this.encryption.sessionKey) return this.encryption.sessionKey;
 
-    let timeoutHandle = null;
-    let timeoutWait = null;
     const timeout = new Promise((_, reject) => {
-      timeoutHandle = this.encryptionSetTimeout(() => {
-        state.waitTimers.delete(timeoutWait);
-        if (!this.isCurrentEncryptionState(state)) return;
-        reject(new Error('No se pudo negociar la clave de cifrado.'));
-      }, this.ENCRYPTION_HANDSHAKE_TIMEOUT);
-      timeoutWait = { timer: timeoutHandle, reject };
-      state.waitTimers.add(timeoutWait);
+      setTimeout(() => reject(new Error('No se pudo negociar la clave de cifrado.')), 10000);
     });
 
-    try {
-      const sessionKey = await Promise.race([this.ensureEncryptionReadyPromise(state), timeout]);
-      if (!this.isCurrentEncryptionState(state)) {
-        const error = new Error('The encryption session was replaced.');
-        error.code = 'ENCRYPTION_SESSION_REPLACED';
-        throw error;
-      }
-      return sessionKey;
-    } finally {
-      if (timeoutHandle !== null) {
-        this.encryptionClearTimeout(timeoutHandle);
-        state.waitTimers.delete(timeoutWait);
-      }
-    }
+    return Promise.race([this.encryption.ready, timeout]);
   }
 
   async encryptChunk(data) {
@@ -619,13 +429,10 @@ class WebRTCManager {
     );
 
     try {
-      if (data.type === 'restart-request') {
-        this.handleRestartRequest(data);
-      } else if (data.type === 'crypto-key') {
+      if (data.type === 'crypto-key') {
         await this.acceptRemoteCryptoKey(data.publicKey, isCurrentConnection);
         if (!isCurrentConnection()) return;
       } else if (data.type === 'offer') {
-        this.negotiationActive = true;
         console.log('Received SDP Offer, creating Answer...');
         await peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
         if (!isCurrentConnection()) return;
@@ -694,7 +501,6 @@ class WebRTCManager {
     const peerConnection = this.peerConnection;
     const generation = this.peerConnectionGeneration;
     if (!peerConnection) return;
-    this.negotiationActive = true;
     try {
       console.log('Creating SDP Offer...');
       const offer = await peerConnection.createOffer();
@@ -709,112 +515,6 @@ class WebRTCManager {
     } catch (err) {
       console.error('Error creating SDP Offer:', err);
     }
-  }
-
-  armNegotiationDeadline(peerConnection, generation) {
-    if (!peerConnection || this.peerConnection !== peerConnection ||
-        this.peerConnectionGeneration !== generation) return false;
-    if (this.negotiationTimer && this.negotiationTimerGeneration === generation) return false;
-
-    this.clearNegotiationDeadline();
-    this.negotiationTimerGeneration = generation;
-    this.negotiationTimer = this.negotiationSetTimeout(() => {
-      this.handleNegotiationTimeout(peerConnection, generation);
-    }, this.WEBRTC_NEGOTIATION_TIMEOUT);
-    if (typeof this.negotiationTimer?.unref === 'function') this.negotiationTimer.unref();
-    return true;
-  }
-
-  clearNegotiationDeadline(expectedGeneration = null) {
-    if (expectedGeneration !== null && this.negotiationTimerGeneration !== expectedGeneration) {
-      return false;
-    }
-    if (this.negotiationTimer) {
-      this.negotiationClearTimeout(this.negotiationTimer);
-    }
-    this.negotiationTimer = null;
-    this.negotiationTimerGeneration = 0;
-    return true;
-  }
-
-  handleNegotiationTimeout(peerConnection, generation) {
-    if (!peerConnection || this.peerConnection !== peerConnection ||
-        this.peerConnectionGeneration !== generation ||
-        this.negotiationTimerGeneration !== generation) return false;
-
-    this.clearNegotiationDeadline(generation);
-    this.negotiationActive = false;
-    this.peerConnectionGeneration += 1;
-    this.dataChannelGeneration += 1;
-    this.rejectAllDeliveryWaiters(
-      'WEBRTC_NEGOTIATION_TIMEOUT',
-      'WebRTC negotiation timed out.'
-    );
-    this.rejectAllResumeWaiters(
-      'WEBRTC_NEGOTIATION_TIMEOUT',
-      'WebRTC negotiation timed out before receiver readiness.'
-    );
-    this.stopNetworkDiagnostics();
-
-    if (this.dataChannel) {
-      try {
-        this.dataChannel.close();
-      } catch (err) {}
-      this.dataChannel = null;
-    }
-    try {
-      peerConnection.close();
-    } catch (err) {}
-    if (this.peerConnection === peerConnection) this.peerConnection = null;
-
-    const error = this.createDeliveryError(
-      'WEBRTC_NEGOTIATION_TIMEOUT',
-      'WebRTC negotiation timed out.'
-    );
-    this.lastNegotiationError = error;
-    if (!this.isClosing && this.onConnectionStateChange) {
-      try {
-        this.onConnectionStateChange('failed', { code: error.code });
-      } catch (err) {
-        console.error('WebRTC negotiation timeout callback failed');
-      }
-    }
-    return true;
-  }
-
-  isValidRestartRequest(message) {
-    return Boolean(
-      message &&
-      message.type === 'restart-request' &&
-      this.hasExactMessageFields(message, ['type', 'requestId']) &&
-      this.isValidTransferId(message.requestId)
-    );
-  }
-
-  rememberRestartRequest(requestId) {
-    this.handledRestartRequests.add(requestId);
-    while (this.handledRestartRequests.size > this.MAX_HANDLED_RESTART_REQUESTS) {
-      this.handledRestartRequests.delete(this.handledRestartRequests.values().next().value);
-    }
-  }
-
-  handleRestartRequest(message) {
-    if (this.role !== 'initiator' || !this.isValidRestartRequest(message) ||
-        this.handledRestartRequests.has(message.requestId)) return false;
-
-    this.rememberRestartRequest(message.requestId);
-    if (this.negotiationActive) return false;
-    return this.reconnect();
-  }
-
-  requestInitiatorRestart() {
-    if (this.role !== 'receiver' || !this.roomCode) return false;
-    const requestId = `restart-${this.sessionGeneration}-${++this.restartRequestCounter}`;
-    this.socketManager.sendSignal(this.roomCode, {
-      type: 'restart-request',
-      requestId
-    });
-    return true;
   }
 
   async handleIncomingMessage(data, channelGeneration = this.dataChannelGeneration) {
@@ -850,14 +550,7 @@ class WebRTCManager {
       throw error;
     }
 
-    if (state.writeMode === 'disk') {
-      if (!state.writable) {
-        state.writeFailed = true;
-        const writeError = new Error('The received disk stream is unavailable.');
-        writeError.code = 'RECEIVER_WRITE_FAILED';
-        writeError.deliveryReason = 'WRITE_FAILED';
-        throw writeError;
-      }
+    if (state.writeMode === 'disk' && state.writable) {
       try {
         state.writeChain = state.writeChain.then(() => state.writable.write(chunkData));
         await state.writeChain;
@@ -939,20 +632,8 @@ class WebRTCManager {
         const sameTransfer = current.metadata.transferId === message.transferId &&
           current.metadata.name === message.name &&
           current.metadata.size === message.size;
-        if (!sameTransfer || current.terminalState) {
+        if (!sameTransfer || current.finalizing || current.terminalState) {
           console.warn('Ignoring unexpected file metadata while another transfer is active');
-          return;
-        }
-        if (current.finalizing) {
-          await current.finalizationPromise;
-          const finalized = this.completedTransfers.get(message.transferId);
-          if (finalized && finalized.sessionGeneration === this.sessionGeneration) {
-            this.sendReceiverReady(message.transferId, {
-              offset: finalized.size,
-              size: finalized.size,
-              writeMode: finalized.writeMode
-            });
-          }
           return;
         }
       }
@@ -969,11 +650,13 @@ class WebRTCManager {
       if (waiter && transfer && transfer.transferId === message.transferId &&
           this.isValidTransferSize(message.offset) && this.isValidTransferSize(message.size) &&
           message.size === transfer.totalBytes) {
-        this.settleResumeWaiter(
-          message.transferId,
-          'resolve',
-          Math.min(message.offset, transfer.totalBytes)
-        );
+        this.resumeWaiters.delete(message.transferId);
+        if (typeof waiter === 'function') {
+          waiter(Math.min(message.offset, transfer.totalBytes));
+        } else {
+          clearTimeout(waiter.timeout);
+          waiter.resolve(Math.min(message.offset, transfer.totalBytes));
+        }
       }
       return;
     }
@@ -984,11 +667,13 @@ class WebRTCManager {
       if (waiter && transfer && transfer.transferId === message.transferId &&
           this.isValidTransferSize(message.offset) && this.isValidTransferSize(message.size) &&
           message.size === transfer.totalBytes) {
-        this.settleResumeWaiter(
-          message.transferId,
-          'resolve',
-          Math.min(message.offset, transfer.totalBytes)
-        );
+        this.resumeWaiters.delete(message.transferId);
+        if (typeof waiter === 'function') {
+          waiter(Math.min(message.offset, transfer.totalBytes));
+        } else {
+          clearTimeout(waiter.timeout);
+          waiter.resolve(Math.min(message.offset, transfer.totalBytes));
+        }
       }
       return;
     }
@@ -1020,10 +705,7 @@ class WebRTCManager {
         return;
       }
       if (state.metadata.transferId !== message.transferId || state.terminalState) return;
-      if (!state.finalizationPromise) {
-        state.finalizationPromise = this.finalizeIncomingFile(message, channelGeneration);
-      }
-      await state.finalizationPromise;
+      await this.finalizeIncomingFile(message, channelGeneration);
       return;
     }
 
@@ -1137,11 +819,10 @@ class WebRTCManager {
     }
 
     this.startNetworkDiagnostics({
-      transferId: metadata.transferId,
       direction: 'receive',
       fileName: metadata.name,
       totalBytes: metadata.size,
-      getBytesTransferred: () => nextState.receivedSize
+      getBytesTransferred: () => this.receiverState.receivedSize
     });
   }
 
@@ -1204,7 +885,6 @@ class WebRTCManager {
   async finalizeIncomingFile(finishedMessage, channelGeneration = this.dataChannelGeneration) {
     const state = this.receiverState;
     const metadata = state.metadata;
-    const finalizationSessionGeneration = state.sessionGeneration;
     if (!metadata || state.finalizing || state.terminalState ||
         channelGeneration !== this.dataChannelGeneration) return;
 
@@ -1231,37 +911,15 @@ class WebRTCManager {
 
       try {
         await state.writeChain;
-        if (this.receiverState !== state ||
-            state.sessionGeneration !== finalizationSessionGeneration ||
-            this.sessionGeneration !== finalizationSessionGeneration ||
-            state.terminalState) {
-          return;
-        }
-        if (channelGeneration !== this.dataChannelGeneration) {
-          state.finalizing = false;
-          state.finalizationPromise = null;
-          return;
-        }
+        if (channelGeneration !== this.dataChannelGeneration || this.receiverState !== state) return;
         if (state.writeFailed) {
           await this.failIncomingTransfer('WRITE_FAILED');
           return;
         }
-        const writable = state.writable;
+        await state.writable.close();
         state.writable = null;
-        state.fileHandle = null;
-        state.diskCloseStarted = true;
-        try {
-          await writable.close();
-        } catch (err) {
-          try {
-            await writable.abort();
-          } catch (abortErr) {}
-          throw err;
-        }
-        if (this.receiverState !== state ||
-            state.sessionGeneration !== finalizationSessionGeneration ||
-            this.sessionGeneration !== finalizationSessionGeneration ||
-            state.terminalState) {
+        if (channelGeneration !== this.dataChannelGeneration || this.receiverState !== state) {
+          if (this.receiverState === state) this.receiverState = this.createEmptyReceiverState();
           return;
         }
         completionOptions = {
@@ -1269,12 +927,6 @@ class WebRTCManager {
           savedToDisk: true
         };
       } catch (err) {
-        if (this.receiverState !== state ||
-            state.sessionGeneration !== finalizationSessionGeneration ||
-            this.sessionGeneration !== finalizationSessionGeneration ||
-            state.terminalState) {
-          return;
-        }
         await this.failIncomingTransfer(
           state.writeFailed ? 'WRITE_FAILED' : 'FINALIZATION_FAILED',
           err
@@ -1300,20 +952,8 @@ class WebRTCManager {
       };
     }
 
-    if (this.receiverState !== state ||
-        state.sessionGeneration !== finalizationSessionGeneration ||
-        this.sessionGeneration !== finalizationSessionGeneration ||
-        state.terminalState ||
-        (completionOptions.writeMode !== 'disk' && channelGeneration !== this.dataChannelGeneration) ||
-        state.completionRecorded) {
-      return;
-    }
-    state.completionRecorded = true;
-    this.rememberCompletedTransfer(
-      metadata,
-      completionOptions.writeMode,
-      this.dataChannelGeneration
-    );
+    if (channelGeneration !== this.dataChannelGeneration || this.receiverState !== state) return;
+    this.rememberCompletedTransfer(metadata, completionOptions.writeMode, channelGeneration);
     state.terminalState = 'completed';
     this.stopNetworkDiagnostics();
     this.sendDeliveryControl({
@@ -1385,21 +1025,35 @@ class WebRTCManager {
   }
 
   async cleanupReceiverDiskStream() {
-    return this.abortReceiverDiskStream(this.receiverState);
-  }
-
-  async abortReceiverDiskStream(state = this.receiverState) {
+    const state = this.receiverState;
     if (!state || !state.writable) return;
-    const writable = state.writable;
-    state.writable = null;
-    state.fileHandle = null;
 
     try {
       await state.writeChain.catch(() => {});
-      await writable.abort();
+      await state.writable.close();
+    } catch (err) {
+      try {
+        await state.writable.abort();
+      } catch (abortErr) {}
+    } finally {
+      state.writable = null;
+      state.fileHandle = null;
+    }
+  }
+
+  async abortReceiverDiskStream() {
+    const state = this.receiverState;
+    if (!state || !state.writable) return;
+
+    try {
+      await state.writeChain.catch(() => {});
+      await state.writable.abort();
     } catch (err) {
       console.error('Error aborting receiver disk stream:', err);
       this.reportTransferError('disk-abort', err, state.metadata && state.metadata.name);
+    } finally {
+      state.writable = null;
+      state.fileHandle = null;
     }
   }
 
@@ -1492,8 +1146,6 @@ class WebRTCManager {
           : null,
         settled: false,
         timeout: null,
-        uncertain: false,
-        uncertainTimeout: null,
         retryTimeout: null,
         retryAbortController: new AbortController()
       };
@@ -1507,8 +1159,12 @@ class WebRTCManager {
     if (!waiter || waiter.settled || waiter.timeout) return false;
 
     waiter.timeout = setTimeout(() => {
-      waiter.timeout = null;
-      this.markDeliveryUncertain(transferId);
+      this.settleDeliveryWaiter(
+        transferId,
+        'reject',
+        this.createDeliveryError('DELIVERY_ACK_TIMEOUT', 'Delivery confirmation timed out.'),
+        'failed'
+      );
     }, this.DELIVERY_ACK_TIMEOUT);
     if (typeof waiter.timeout.unref === 'function') waiter.timeout.unref();
     return true;
@@ -1606,77 +1262,6 @@ class WebRTCManager {
     return true;
   }
 
-  markDeliveryUncertain(transferId) {
-    const waiter = this.deliveryWaiters.get(transferId);
-    if (!waiter || waiter.settled || waiter.uncertain) return false;
-
-    waiter.uncertain = true;
-    this.uncertainDelivery = Object.freeze({
-      transferId,
-      size: waiter.size,
-      channelGeneration: this.dataChannelGeneration
-    });
-    waiter.uncertainTimeout = setTimeout(() => {
-      this.settleDeliveryWaiter(
-        transferId,
-        'reject',
-        this.createDeliveryError('DELIVERY_ACK_TIMEOUT', 'Delivery confirmation timed out.'),
-        'failed'
-      );
-    }, this.DELIVERY_UNCERTAIN_TIMEOUT);
-    if (typeof waiter.uncertainTimeout.unref === 'function') waiter.uncertainTimeout.unref();
-    return true;
-  }
-
-  getSenderFailureType(error) {
-    if (error && error.code === 'RELAY_LIMIT_REACHED') return 'relay-budget';
-    if (error && (
-      error.code === 'RECEIVER_NOT_READY' ||
-      String(error.code || '').startsWith('DELIVERY_')
-    )) {
-      return 'protocol';
-    }
-    return 'network';
-  }
-
-  finalizeSenderTransfer(transfer, error, fileName = transfer && transfer.fileName) {
-    if (!transfer) return false;
-    const cancelled = transfer.cancelled ||
-      (error && (error.name === 'AbortError' || error.code === 'TRANSFER_CANCELLED'));
-    const terminalState = cancelled ? 'cancelled' : 'failed';
-
-    if (!transfer.terminalState) {
-      transfer.terminalError = error;
-      this.transitionSenderTerminalState(transfer, terminalState);
-    } else if (transfer.terminalState !== terminalState) {
-      return false;
-    }
-
-    const terminalError = transfer.terminalError || error;
-    transfer.terminalError = terminalError;
-    transfer.cancelled = terminalState === 'cancelled';
-    transfer.abortController.abort();
-    if (transfer.reader) transfer.reader.cancel().catch(() => {});
-    this.settleResumeWaiter(transfer.transferId, 'reject', terminalError);
-    this.rejectDeliveryWaiter(transfer.transferId, terminalError, terminalState);
-    this.stopNetworkDiagnostics();
-
-    if (terminalState === 'cancelled') {
-      this.invokeSenderTerminalCallback(transfer, 'cancelled', () => {
-        if (this.onFileTransferCancelled) this.onFileTransferCancelled(fileName, true);
-      });
-    } else {
-      this.invokeSenderTerminalCallback(transfer, 'failed', () => {
-        this.reportTransferError(this.getSenderFailureType(terminalError), terminalError, fileName);
-      });
-    }
-
-    if (this.activeSendTransfer === transfer) {
-      this.activeSendTransfer = null;
-    }
-    return true;
-  }
-
   invokeSenderTerminalCallback(transfer, terminalState, callback) {
     if (!transfer || transfer.terminalState !== terminalState || transfer.terminalCallbackInvoked) return false;
     transfer.terminalCallbackInvoked = true;
@@ -1691,27 +1276,15 @@ class WebRTCManager {
   settleDeliveryWaiter(transferId, outcome, error, terminalState = outcome === 'resolve' ? 'completed' : 'failed') {
     const waiter = this.deliveryWaiters.get(transferId);
     if (!waiter || waiter.settled) return false;
-    if (waiter.transfer) {
-      if (!waiter.transfer.terminalState) {
-        this.transitionSenderTerminalState(waiter.transfer, terminalState);
-      } else if (waiter.transfer.terminalState !== terminalState) {
-        return false;
-      }
-    }
+    if (waiter.transfer && !this.transitionSenderTerminalState(waiter.transfer, terminalState)) return false;
 
     waiter.settled = true;
     if (waiter.timeout) clearTimeout(waiter.timeout);
     waiter.timeout = null;
-    if (waiter.uncertainTimeout) clearTimeout(waiter.uncertainTimeout);
-    waiter.uncertainTimeout = null;
     if (waiter.retryTimeout) clearTimeout(waiter.retryTimeout);
     waiter.retryTimeout = null;
     waiter.retryAbortController.abort();
     this.deliveryWaiters.delete(transferId);
-    if (this.uncertainDelivery &&
-        this.uncertainDelivery.transferId === transferId) {
-      this.uncertainDelivery = null;
-    }
 
     if (outcome === 'resolve') waiter.resolve();
     else waiter.reject(error);
@@ -1778,29 +1351,28 @@ class WebRTCManager {
     this.throwIfTransferCancelled(transfer);
     this.activeSendTransfer = transfer;
 
-    let resumeOffset;
-    let reader = null;
-    try {
-      if (this.onFileTransferStart) {
-        this.onFileTransferStart(file.name, file.size, true, {
-          writeMode: 'send',
-          performanceProfile: performanceProfile.label,
-          connectionType: performanceProfile.connectionType,
-          chunkSize: CHUNK_SIZE
-        });
-      }
-
-      const metadata = {
-        type: 'metadata',
-        name: file.name,
-        size: file.size,
-        mime: file.type || 'application/octet-stream',
-        transferId: transfer.transferId,
-        encryption: sessionKey ? 'aes-gcm-256' : null,
+    if (this.onFileTransferStart) {
+      this.onFileTransferStart(file.name, file.size, true, {
+        writeMode: 'send',
         performanceProfile: performanceProfile.label,
         connectionType: performanceProfile.connectionType,
         chunkSize: CHUNK_SIZE
-      };
+      });
+    }
+
+    const metadata = {
+      type: 'metadata',
+      name: file.name,
+      size: file.size,
+      mime: file.type || 'application/octet-stream',
+      transferId: transfer.transferId,
+      encryption: sessionKey ? 'aes-gcm-256' : null,
+      performanceProfile: performanceProfile.label,
+      connectionType: performanceProfile.connectionType,
+      chunkSize: CHUNK_SIZE
+    };
+    let resumeOffset;
+    try {
       this.throwIfTransferCancelled(transfer);
       await this.sendWithBackpressure(
         JSON.stringify(metadata),
@@ -1813,24 +1385,34 @@ class WebRTCManager {
         error.code = 'RECEIVER_NOT_READY';
         throw error;
       }
-
-      this.startNetworkDiagnostics({
-        transferId: transfer.transferId,
-        direction: 'send',
-        fileName: file.name,
-        totalBytes: file.size,
-        getBytesTransferred: () => transfer.bytesTransferred
-      });
-
-      const stream = file.slice(resumeOffset).stream();
-      reader = stream.getReader();
-      transfer.reader = reader;
     } catch (err) {
-      this.finalizeSenderTransfer(transfer, err, file.name);
-      throw transfer.terminalError || err;
+      const resumeWaiter = this.resumeWaiters.get(transfer.transferId);
+      if (resumeWaiter) clearTimeout(resumeWaiter.timeout);
+      this.resumeWaiters.delete(transfer.transferId);
+      if (err && err.code === 'RTC_TRANSFER_STALLED') {
+        this.transitionSenderTerminalState(transfer, 'failed');
+        this.invokeSenderTerminalCallback(transfer, 'failed', () => {
+          this.reportTransferError('network', err, file.name);
+        });
+      }
+      if (this.activeSendTransfer === transfer) {
+        this.activeSendTransfer = null;
+      }
+      throw err;
     }
 
+    this.startNetworkDiagnostics({
+      direction: 'send',
+      fileName: file.name,
+      totalBytes: file.size,
+      getBytesTransferred: () => transfer.bytesTransferred
+    });
+
     let offset = resumeOffset;
+    const stream = file.slice(resumeOffset).stream();
+    const reader = stream.getReader();
+    transfer.reader = reader;
+
     try {
       while (true) {
         this.throwIfTransferCancelled(transfer);
@@ -1925,22 +1507,42 @@ class WebRTCManager {
         }
       });
     } catch (err) {
+      this.stopNetworkDiagnostics();
+
       if (transfer.proRequired || err.name === 'ProRequiredError') {
-        err = transfer.terminalError || this.createProRequiredError();
-      } else if (transfer.cancelled || err.name === 'AbortError') {
-        err = transfer.terminalError || this.createTransferCancelledError();
+        this.transitionSenderTerminalState(transfer, 'failed');
+        throw this.createProRequiredError();
       }
 
-      this.finalizeSenderTransfer(transfer, err, file.name);
+      if (transfer.cancelled || err.name === 'AbortError') {
+        this.transitionSenderTerminalState(transfer, 'cancelled');
+        throw this.createTransferCancelledError();
+      }
+
+      if ([
+        'DELIVERY_ACK_TIMEOUT',
+        'DELIVERY_REJECTED',
+        'DELIVERY_TERMINAL_SEND_TIMEOUT',
+        'DELIVERY_TERMINAL_SEND_FAILED',
+        'RTC_TRANSFER_STALLED'
+      ].includes(err.code)) {
+        this.transitionSenderTerminalState(transfer, 'failed');
+        this.invokeSenderTerminalCallback(transfer, 'failed', () => {
+          this.reportTransferError(err.code === 'RTC_TRANSFER_STALLED' ? 'network' : 'protocol', err, file.name);
+        });
+      }
+
+      this.transitionSenderTerminalState(transfer, 'failed');
+
       console.error('Error during file stream send:', err);
-      throw transfer.terminalError || err;
+      throw err;
     } finally {
       this.rejectDeliveryWaiter(
         transfer.transferId,
         this.createDeliveryError('DELIVERY_ABORTED', 'Delivery confirmation was abandoned.')
       );
       this.flushRelayUsage();
-      if (reader) reader.releaseLock();
+      reader.releaseLock();
       if (this.activeSendTransfer === transfer) {
         this.activeSendTransfer = null;
       }
@@ -1957,69 +1559,29 @@ class WebRTCManager {
 
   waitForReceiverReady(transfer) {
     return new Promise((resolve, reject) => {
-      const abort = () => {
-        this.settleResumeWaiter(
-          transfer.transferId,
-          'reject',
-          this.createTransferCancelledError()
-        );
-      };
       const timeout = setTimeout(() => {
-        this.settleResumeWaiter(transfer.transferId, 'resolve', null);
+        this.resumeWaiters.delete(transfer.transferId);
+        resolve(null);
       }, this.RECEIVER_READY_TIMEOUT);
 
-      this.resumeWaiters.set(transfer.transferId, {
-        resolve,
-        reject,
-        timeout,
-        abort,
-        signal: transfer.abortController.signal,
-        settled: false
-      });
-      if (transfer.abortController.signal.aborted) {
-        abort();
-      } else {
-        transfer.abortController.signal.addEventListener('abort', abort, { once: true });
-      }
+      this.resumeWaiters.set(transfer.transferId, { resolve, reject, timeout });
     });
   }
 
-  settleResumeWaiter(transferId, outcome, value) {
-    const waiter = this.resumeWaiters.get(transferId);
-    if (!waiter) return false;
-    this.resumeWaiters.delete(transferId);
-    if (typeof waiter === 'function') {
-      waiter(outcome === 'resolve' ? value : null);
-      return true;
-    }
-    if (waiter.settled) return false;
-    waiter.settled = true;
-    clearTimeout(waiter.timeout);
-    if (waiter.signal && waiter.abort) {
-      waiter.signal.removeEventListener('abort', waiter.abort);
-    }
-    if (outcome === 'resolve') waiter.resolve(value);
-    else waiter.reject(value);
-    return true;
-  }
-
   rejectAllResumeWaiters(code, message) {
-    for (const transferId of [...this.resumeWaiters.keys()]) {
-      this.settleResumeWaiter(
-        transferId,
-        'reject',
-        this.createDeliveryError(code, message)
-      );
+    for (const [transferId, waiter] of this.resumeWaiters.entries()) {
+      this.resumeWaiters.delete(transferId);
+      if (typeof waiter === 'function') {
+        waiter(null);
+      } else {
+        clearTimeout(waiter.timeout);
+        waiter.reject(this.createDeliveryError(code, message));
+      }
     }
   }
 
   startNewPairingSession() {
-    this.clearNegotiationDeadline();
     this.sessionGeneration += 1;
-    this.resetEncryptionSession();
-    this.negotiationActive = false;
-    this.restartRequestCounter = 0;
-    this.handledRestartRequests.clear();
     this.completedTransfers.clear();
     this.completedTransferIds.clear();
     this.rejectAllDeliveryWaiters('SESSION_REPLACED', 'The paired session was replaced.');
@@ -2192,12 +1754,26 @@ class WebRTCManager {
     if (!transfer || transfer.cancelled || transfer.terminalState) return false;
 
     const cancelError = this.createTransferCancelledError();
+    const settled = this.rejectDeliveryWaiter(transfer.transferId, cancelError, 'cancelled');
+    if (!settled && !this.transitionSenderTerminalState(transfer, 'cancelled')) return false;
     transfer.cancelled = true;
+    transfer.abortController.abort();
+    this.stopNetworkDiagnostics();
+
+    if (transfer.reader) {
+      transfer.reader.cancel().catch(() => {});
+    }
+
     this.sendDeliveryControl({
       type: 'transfer-cancelled',
       transferId: transfer.transferId
     });
-    return this.finalizeSenderTransfer(transfer, cancelError, transfer.fileName);
+
+    this.invokeSenderTerminalCallback(transfer, 'cancelled', () => {
+      if (this.onFileTransferCancelled) this.onFileTransferCancelled(transfer.fileName, true);
+    });
+
+    return true;
   }
 
   waitForBufferedAmountLow(signal) {
@@ -2370,93 +1946,61 @@ class WebRTCManager {
   startNetworkDiagnostics(transferInfo) {
     this.stopNetworkDiagnostics();
 
-    const context = Object.freeze({
-      generation: ++this.diagnosticsGeneration,
-      transferId: transferInfo.transferId,
-      direction: transferInfo.direction,
-      fileName: transferInfo.fileName,
-      totalBytes: transferInfo.totalBytes,
-      getBytesTransferred: transferInfo.getBytesTransferred,
-      peerConnection: this.peerConnection
-    });
-    const state = {
-      context,
-      lastBytes: context.getBytesTransferred(),
-      lastTimestamp: performance.now(),
-      nextRead: 0,
-      lastAppliedRead: 0
-    };
-    this.diagnosticsTransfer = context;
-    this.diagnosticsState = state;
-    this.lastDiagnosticsBytes = state.lastBytes;
-    this.lastDiagnosticsTimestamp = state.lastTimestamp;
+    this.diagnosticsTransfer = transferInfo;
+    this.lastDiagnosticsBytes = transferInfo.getBytesTransferred();
+    this.lastDiagnosticsTimestamp = performance.now();
 
-    this.emitNetworkDiagnostics(context).catch((err) => {
+    this.emitNetworkDiagnostics().catch((err) => {
       console.warn('Initial WebRTC diagnostics failed:', err);
     });
 
     this.diagnosticsInterval = setInterval(() => {
-      this.emitNetworkDiagnostics(context).catch((err) => {
+      this.emitNetworkDiagnostics().catch((err) => {
         console.warn('WebRTC diagnostics failed:', err);
       });
     }, 2000);
   }
 
   stopNetworkDiagnostics() {
-    this.diagnosticsGeneration += 1;
     if (this.diagnosticsInterval) {
       clearInterval(this.diagnosticsInterval);
       this.diagnosticsInterval = null;
     }
 
     this.diagnosticsTransfer = null;
-    this.diagnosticsState = null;
     this.lastDiagnosticsBytes = 0;
     this.lastDiagnosticsTimestamp = 0;
   }
 
-  async emitNetworkDiagnostics(context = this.diagnosticsTransfer) {
-    const state = this.diagnosticsState;
-    if (!context || !state || state.context !== context ||
-        context.generation !== this.diagnosticsGeneration ||
-        !context.peerConnection || !this.onNetworkDiagnostics) {
-      return false;
-    }
+  async emitNetworkDiagnostics() {
+    if (!this.peerConnection || !this.diagnosticsTransfer || !this.onNetworkDiagnostics) return;
 
     const now = performance.now();
-    const bytesTransferred = context.getBytesTransferred();
-    const read = ++state.nextRead;
-    const connection = await this.getActiveCandidatePairDetails(context.peerConnection);
-    if (this.diagnosticsState !== state ||
-        this.diagnosticsTransfer !== context ||
-        context.generation !== this.diagnosticsGeneration ||
-        read <= state.lastAppliedRead) {
-      return false;
-    }
-
-    const elapsedSeconds = Math.max((now - state.lastTimestamp) / 1000, 0.001);
-    const speed = Math.max((bytesTransferred - state.lastBytes) / elapsedSeconds, 0);
-    const percent = context.totalBytes > 0
-      ? Math.min(100, (bytesTransferred / context.totalBytes) * 100)
+    const bytesTransferred = this.diagnosticsTransfer.getBytesTransferred();
+    const elapsedSeconds = Math.max((now - this.lastDiagnosticsTimestamp) / 1000, 0.001);
+    const speed = Math.max((bytesTransferred - this.lastDiagnosticsBytes) / elapsedSeconds, 0);
+    const percent = this.diagnosticsTransfer.totalBytes > 0
+      ? Math.min(100, (bytesTransferred / this.diagnosticsTransfer.totalBytes) * 100)
       : 0;
 
+    const connection = await this.getActiveCandidatePairDetails();
     const metrics = {
       connectionType: connection.connectionType,
       speed,
       qualityLabel: this.getQualityLabel(connection.connectionType, speed),
       isLocal: connection.connectionType === 'host',
       percent,
-      direction: context.direction,
-      fileName: context.fileName
+      direction: this.diagnosticsTransfer.direction,
+      fileName: this.diagnosticsTransfer.fileName
     };
 
     this.transferDiagnostics.bytesTransferred = bytesTransferred;
-    this.transferDiagnostics.totalBytes = context.totalBytes;
+    this.transferDiagnostics.totalBytes = this.diagnosticsTransfer.totalBytes;
     this.transferDiagnostics.percent = percent;
     this.transferDiagnostics.speedBytesPerSecond = speed;
     this.transferDiagnostics.speedMBps = speed / (1024 * 1024);
-    this.transferDiagnostics.direction = context.direction;
-    this.transferDiagnostics.fileName = context.fileName;
+    this.transferDiagnostics.direction = this.diagnosticsTransfer.direction;
+    this.transferDiagnostics.fileName = this.diagnosticsTransfer.fileName;
     this.transferDiagnostics.updatedAt = new Date().toISOString();
 
     console.info('[AirDows] Transfer metrics', {
@@ -2467,14 +2011,10 @@ class WebRTCManager {
       bytes: `${bytesTransferred}/${this.transferDiagnostics.totalBytes}`
     });
 
-    state.lastAppliedRead = read;
-    state.lastBytes = bytesTransferred;
-    state.lastTimestamp = now;
-    this.lastDiagnosticsBytes = state.lastBytes;
-    this.lastDiagnosticsTimestamp = state.lastTimestamp;
+    this.lastDiagnosticsBytes = bytesTransferred;
+    this.lastDiagnosticsTimestamp = now;
     this.lastDiagnosticsMetrics = metrics;
     this.onNetworkDiagnostics(metrics);
-    return true;
   }
 
   calculatePercent(bytesTransferred, totalBytes) {
@@ -2496,16 +2036,16 @@ class WebRTCManager {
     }
   }
 
-  async getActiveCandidatePairDetails(peerConnection = this.peerConnection) {
+  async getActiveCandidatePairDetails() {
     const fallback = {
       connectionType: 'unknown',
       localCandidateType: 'unknown',
       remoteCandidateType: 'unknown'
     };
 
-    if (!peerConnection) return fallback;
+    if (!this.peerConnection) return fallback;
 
-    const stats = await peerConnection.getStats();
+    const stats = await this.peerConnection.getStats();
     let activePair = null;
 
     stats.forEach((report) => {
@@ -2565,8 +2105,6 @@ class WebRTCManager {
     console.log('Cleaning up WebRTC connections...');
     this.isClosing = true;
     this.recoveryPrepared = false;
-    this.negotiationActive = false;
-    this.clearNegotiationDeadline();
     this.sessionGeneration += 1;
     this.peerConnectionGeneration += 1;
     this.dataChannelGeneration += 1;
@@ -2612,12 +2150,10 @@ class WebRTCManager {
     this.pendingRemoteCandidates = [];
     this.resumeWaiters.clear();
     this.deliveryWaiters.clear();
-    this.uncertainDelivery = null;
     this.completedTransfers.clear();
     this.completedTransferIds.clear();
-    this.handledRestartRequests.clear();
     this.incomingMessageChain = Promise.resolve();
-    this.resetEncryptionSession();
+    this.encryption = this.createEncryptionState();
     this.receiverState = this.createEmptyReceiverState();
   }
 
@@ -2633,21 +2169,12 @@ class WebRTCManager {
     this.isClosing = false;
     this.recoveryPrepared = false;
 
-    const hasCurrentPendingOffer = this.role === 'receiver' && this.pendingSignals.some((signal) => (
-      signal &&
-      signal.signalQueueGeneration === this.signalQueueGeneration &&
-      signal.data &&
-      signal.data.type === 'offer'
-    ));
     this.createPeerConnection();
-    this.resumeEncryptionHandshake();
     this.flushPendingSignals();
 
     if (this.role === 'initiator') {
       this.createDataChannel();
       this.createOffer();
-    } else if (!hasCurrentPendingOffer) {
-      this.requestInitiatorRestart();
     }
 
     return true;
@@ -2656,7 +2183,6 @@ class WebRTCManager {
   prepareForRecovery() {
     if (this.recoveryPrepared) return true;
     this.recoveryPrepared = true;
-    this.clearNegotiationDeadline();
     this.peerConnectionGeneration += 1;
     this.dataChannelGeneration += 1;
     this.signalQueueGeneration += 1;
