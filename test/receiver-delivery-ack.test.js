@@ -584,7 +584,10 @@ test('late ACK after timeout is ignored', async () => {
   const manager = createManager({ deliveryAckTimeout: 5 });
   const promise = manager.createDeliveryWaiter('late-timeout', 1);
   manager.armDeliveryAckTimeout('late-timeout');
-  await assert.rejects(promise, { code: 'DELIVERY_ACK_TIMEOUT' });
+  await assert.rejects(
+    waitWithReferencedTimeout(promise, 100, 'Timed out waiting for the delivery ACK deadline.'),
+    { code: 'DELIVERY_ACK_TIMEOUT' }
+  );
   assert.equal(manager.handleTransferAck({ type: 'transfer-ack', transferId: 'late-timeout', size: 1 }), false);
   assert.equal(manager.handleTransferAck({ type: 'transfer-ack', transferId: 'late-timeout', size: 1 }), false);
 });
@@ -596,7 +599,10 @@ test('ACK timeout rejects sendFile with DELIVERY_ACK_TIMEOUT', async () => {
   await waitForControl(channel, 'transfer-finished');
   assert.ok(manager.deliveryWaiters.get(transferId)?.timeout);
   const transfer = manager.activeSendTransfer;
-  await assert.rejects(promise, { code: 'DELIVERY_ACK_TIMEOUT' });
+  await assert.rejects(
+    waitWithReferencedTimeout(promise, 200, 'Timed out waiting for sendFile to reject after the ACK deadline.'),
+    { code: 'DELIVERY_ACK_TIMEOUT' }
+  );
   assert.equal(manager.handleTransferAck({ type: 'transfer-ack', transferId, size: file.size }), false);
   assert.equal(transfer.terminalState, 'failed');
   assert.equal(completions, 0);
