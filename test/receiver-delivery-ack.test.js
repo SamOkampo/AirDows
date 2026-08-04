@@ -1075,7 +1075,13 @@ test('receiver finalization error cannot also invoke successful completion', asy
 });
 
 test('duplicate transfer-finished messages finalize only once', async () => {
-  const { manager, channel, state, transferId, size } = prepareReceiver();
+  let now = 1000;
+  const { manager, channel, state, transferId, size } = prepareReceiver({
+    managerOptions: {
+      deliveryAckCooldown: 100,
+      deliveryAckNow: () => now
+    }
+  });
   let completions = 0;
   manager.onFileTransferComplete = () => { completions += 1; };
   await sendFinished(manager, transferId, size);
