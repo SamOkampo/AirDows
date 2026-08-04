@@ -109,6 +109,20 @@ async function waitForControl(channel, type) {
   throw new Error(`Timed out waiting for ${type}`);
 }
 
+async function waitWithReferencedTimeout(promise, timeoutMs, message) {
+  let timeout = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+      })
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
 function startSender(options = {}) {
   const manager = createManager(options);
   const channel = new FakeDataChannel((data) => {
@@ -463,7 +477,11 @@ test('lost first ACK after receiver finalization is recovered without duplicate 
   sender.onFileTransferComplete = () => { senderCompletions += 1; };
   receiver.onFileTransferComplete = () => { receiverCompletions += 1; };
 
-  await sender.sendFile(createFile(), { transferId: 'lost-first-ack' });
+  await waitWithReferencedTimeout(
+    sender.sendFile(createFile(), { transferId: 'lost-first-ack' }),
+    150,
+    'Timed out waiting for transfer-finished retry after the first ACK was dropped.'
+  );
 
   assert.equal(droppedAcks, 1);
   assert.equal(senderCompletions, 1);
@@ -565,7 +583,10 @@ test('late ACK after timeout is ignored', async () => {
   const manager = createManager({ deliveryAckTimeout: 5 });
   const promise = manager.createDeliveryWaiter('late-timeout', 1);
   manager.armDeliveryAckTimeout('late-timeout');
-  await assert.rejects(promise, { code: 'DELIVERY_ACK_TIMEOUT' });
+  await assert.rejects(
+    waitWithReferencedTimeout(promise, 100, 'Timed out waiting for the delivery ACK deadline.'),
+    { code: 'DELIVERY_ACK_TIMEOUT' }
+  );
   assert.equal(manager.handleTransferAck({ type: 'transfer-ack', transferId: 'late-timeout', size: 1 }), false);
   assert.equal(manager.handleTransferAck({ type: 'transfer-ack', transferId: 'late-timeout', size: 1 }), false);
 });
@@ -577,7 +598,10 @@ test('ACK timeout rejects sendFile with DELIVERY_ACK_TIMEOUT', async () => {
   await waitForControl(channel, 'transfer-finished');
   assert.ok(manager.deliveryWaiters.get(transferId)?.timeout);
   const transfer = manager.activeSendTransfer;
-  await assert.rejects(promise, { code: 'DELIVERY_ACK_TIMEOUT' });
+  await assert.rejects(
+    waitWithReferencedTimeout(promise, 200, 'Timed out waiting for sendFile to reject after the ACK deadline.'),
+    { code: 'DELIVERY_ACK_TIMEOUT' }
+  );
   assert.equal(manager.handleTransferAck({ type: 'transfer-ack', transferId, size: file.size }), false);
   assert.equal(transfer.terminalState, 'failed');
   assert.equal(completions, 0);
@@ -1579,7 +1603,10 @@ test('stalled delivery retry runs terminal failure cleanup exactly once', async 
   const transfer = manager.activeSendTransfer;
   const waiter = manager.deliveryWaiters.get(transferId);
   assert.ok(waiter);
-  await assert.rejects(sending, { code: 'RTC_TRANSFER_STALLED' });
+  await assert.rejects(
+    waitWithReferencedTimeout(sending, 250, 'Timed out waiting for the stalled delivery retry to fail.'),
+    { code: 'RTC_TRANSFER_STALLED' }
+  );
 
   assert.equal(failureCallbacks, 1);
   assert.equal(wakeLockHeld, false);

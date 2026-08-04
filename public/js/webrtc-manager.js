@@ -66,23 +66,21 @@ class WebRTCManager {
 
     this.diagnosticsInterval = null;
     this.diagnosticsTransfer = null;
+    this.diagnosticsGeneration = 0;
     this.lastDiagnosticsBytes = 0;
     this.lastDiagnosticsTimestamp = 0;
     this.lastDiagnosticsMetrics = null;
     this.currentPerformanceProfile = null;
-    this.transferDiagnostics = {
-      bytesTransferred: 0,
-      totalBytes: 0,
-      percent: 0,
-      speedBytesPerSecond: 0,
-      speedMBps: 0,
-      direction: null,
-      fileName: null,
-      updatedAt: null
-    };
+    const PerformanceDiagnostics = typeof globalThis !== 'undefined'
+      ? globalThis.AirDowsTransferPerformanceDiagnostics
+      : null;
+    this.performanceDiagnostics = options.performanceDiagnosticsEnabled === true &&
+      typeof PerformanceDiagnostics === 'function'
+      ? new PerformanceDiagnostics()
+      : null;
 
-    if (typeof window !== 'undefined') {
-      window.airDowsDiagnostics = this.transferDiagnostics;
+    if (typeof window !== 'undefined' && this.performanceDiagnostics) {
+      window.airDowsDiagnostics = this.performanceDiagnostics.createPublicApi();
     }
   }
 
@@ -120,6 +118,63 @@ class WebRTCManager {
     this.rtcConfig = config;
   }
 
+  recordPerformance(method, ...args) {
+    try {
+      const handler = this.performanceDiagnostics && this.performanceDiagnostics[method];
+      return typeof handler === 'function'
+        ? handler.apply(this.performanceDiagnostics, args)
+        : null;
+    } catch (err) {
+      console.warn('[AirDows] Local performance diagnostics unavailable');
+      return null;
+    }
+  }
+
+  performanceNow() {
+    try {
+      return typeof performance !== 'undefined' && typeof performance.now === 'function'
+        ? performance.now()
+        : Date.now();
+    } catch (err) {
+      return 0;
+    }
+  }
+
+  capturePerformanceTiming() {
+    try {
+      const monotonicMs = this.performanceNow();
+      const epochMs = typeof performance !== 'undefined' &&
+        Number.isFinite(performance.timeOrigin) &&
+        typeof performance.now === 'function'
+        ? performance.timeOrigin + performance.now()
+        : Date.now();
+      return {
+        monotonicMs: Number.isFinite(monotonicMs) ? monotonicMs : 0,
+        epochMs: Number.isFinite(epochMs) ? epochMs : 0
+      };
+    } catch (err) {
+      return { monotonicMs: 0, epochMs: 0 };
+    }
+  }
+
+  recordBufferedAmount(method, transferId, channel = this.dataChannel) {
+    try {
+      const bufferedAmount = channel && channel.bufferedAmount;
+      if (!Number.isSafeInteger(bufferedAmount) || bufferedAmount < 0) return null;
+      return this.recordPerformance(method, transferId, bufferedAmount);
+    } catch (err) {
+      return null;
+    }
+  }
+
+  markPairingStarted() {
+    this.recordPerformance('beginPairing');
+  }
+
+  markPairingEstablished() {
+    this.recordPerformance('markPaired');
+  }
+
   initialize(role, roomCode) {
     if (!this.rtcConfig) {
       console.error('WebRTC: Cannot initialize without ICE configuration');
@@ -131,6 +186,7 @@ class WebRTCManager {
     this.roomCode = roomCode;
     this.isClosing = false;
     this.recoveryPrepared = false;
+    this.recordPerformance('markDataChannelState', 'connecting');
     if (!this.encryption.ready) {
       this.encryption.ready = new Promise((resolve, reject) => {
         this.encryption.resolveReady = resolve;
@@ -219,6 +275,7 @@ class WebRTCManager {
     this.dataChannel = channel;
     this.dataChannel.binaryType = 'arraybuffer';
     this.dataChannel.bufferedAmountLowThreshold = this.BUFFER_LOW_THRESHOLD;
+    this.recordPerformance('markDataChannelState', 'connecting');
 
     const handleTerminalEvent = (code, message, logMessage) => {
       if (terminalEventHandled || this.dataChannel !== channel ||
@@ -227,6 +284,10 @@ class WebRTCManager {
       terminalEventHandled = true;
       this.dataChannelGeneration += 1;
       console.log(logMessage);
+      this.recordPerformance(
+        'markDataChannelState',
+        code === 'DATA_CHANNEL_ERROR' ? 'error' : 'closed'
+      );
       this.rejectAllDeliveryWaiters(code, message);
       this.stopNetworkDiagnostics();
       if (!this.isClosing && this.onConnectionStateChange) {
@@ -242,6 +303,7 @@ class WebRTCManager {
     this.dataChannel.onopen = () => {
       if (this.dataChannel !== channel || this.dataChannelGeneration !== channelGeneration) return;
       console.log('Data channel state is: OPEN');
+      this.recordPerformance('markDataChannelState', 'open');
       if (this.onConnectionStateChange) {
         this.onConnectionStateChange('connected');
       }
@@ -270,11 +332,19 @@ class WebRTCManager {
 
     this.dataChannel.onmessage = (event) => {
       if (this.dataChannel !== channel || this.dataChannelGeneration !== channelGeneration) return;
-      this.enqueueIncomingMessage(event.data, channelGeneration);
+      this.enqueueIncomingMessage(
+        event.data,
+        channelGeneration,
+        this.capturePerformanceTiming()
+      );
     };
   }
 
-  enqueueIncomingMessage(data, channelGeneration = this.dataChannelGeneration) {
+  enqueueIncomingMessage(
+    data,
+    channelGeneration = this.dataChannelGeneration,
+    arrivalTiming = undefined
+  ) {
     const rejectMetadata = this.isUnexpectedMetadataAtArrival(data);
     const task = this.incomingMessageChain.then(() => {
       if (channelGeneration !== this.dataChannelGeneration) return;
@@ -282,7 +352,7 @@ class WebRTCManager {
         console.warn('Ignoring unexpected file metadata while another transfer is active');
         return;
       }
-      return this.handleIncomingMessage(data, channelGeneration);
+      return this.handleIncomingMessage(data, channelGeneration, arrivalTiming);
     });
     this.incomingMessageChain = task.catch(async (err) => {
       if (channelGeneration !== this.dataChannelGeneration) return;
@@ -515,30 +585,48 @@ class WebRTCManager {
     }
   }
 
-  async handleIncomingMessage(data, channelGeneration = this.dataChannelGeneration) {
+  async handleIncomingMessage(
+    data,
+    channelGeneration = this.dataChannelGeneration,
+    arrivalTiming = undefined
+  ) {
     if (typeof data === 'string') {
-      await this.handleIncomingTextMessage(data, channelGeneration);
+      await this.handleIncomingTextMessage(data, channelGeneration, arrivalTiming);
       return;
     }
 
     if (data instanceof ArrayBuffer) {
-      await this.handleIncomingFileChunk(data, channelGeneration);
+      await this.handleIncomingFileChunk(data, channelGeneration, arrivalTiming);
       return;
     }
 
     console.warn('Received unsupported data channel payload');
   }
 
-  async handleIncomingFileChunk(data, channelGeneration = this.dataChannelGeneration) {
+  async handleIncomingFileChunk(
+    data,
+    channelGeneration = this.dataChannelGeneration,
+    arrivalTiming = undefined
+  ) {
     const state = this.receiverState;
     if (!state.metadata) {
       console.error('Received binary chunk without file metadata!');
       return;
     }
 
-    const chunkData = state.metadata.encryption === 'aes-gcm-256'
-      ? await this.decryptChunk(data)
-      : data;
+    let chunkData = data;
+    if (state.metadata.encryption === 'aes-gcm-256') {
+      const decryptionStartedAt = this.performanceNow();
+      try {
+        chunkData = await this.decryptChunk(data);
+      } finally {
+        this.recordPerformance(
+          'addEncryptionTime',
+          state.metadata.transferId,
+          Math.max(0, this.performanceNow() - decryptionStartedAt)
+        );
+      }
+    }
     if (channelGeneration !== this.dataChannelGeneration || this.receiverState !== state) return;
 
     if (state.receivedSize + chunkData.byteLength > state.metadata.size) {
@@ -582,11 +670,26 @@ class WebRTCManager {
       }
     }
 
-    state.receivedSize += chunkData.byteLength;
+    const receivedBytesAfter = state.receivedSize + chunkData.byteLength;
+    this.recordPerformance(
+      'markReceiverByteArrival',
+      state.metadata.transferId,
+      receivedBytesAfter,
+      arrivalTiming
+    );
+    state.receivedSize = receivedBytesAfter;
+    this.recordPerformance('markBytes', state.metadata.transferId, state.receivedSize);
+    if (state.receivedSize === state.metadata.size) {
+      this.recordPerformance('markDataFinished', state.metadata.transferId);
+    }
     this.reportTransferProgress(state.receivedSize, state.metadata.size, state.metadata.name, false);
   }
 
-  async handleIncomingTextMessage(rawText, channelGeneration = this.dataChannelGeneration) {
+  async handleIncomingTextMessage(
+    rawText,
+    channelGeneration = this.dataChannelGeneration,
+    arrivalTiming = undefined
+  ) {
     if (channelGeneration !== this.dataChannelGeneration) return;
     let message = null;
 
@@ -677,7 +780,7 @@ class WebRTCManager {
     }
 
     if (message.type === 'transfer-ack') {
-      this.handleTransferAck(message);
+      this.handleTransferAck(message, arrivalTiming);
       return;
     }
 
@@ -703,6 +806,11 @@ class WebRTCManager {
         return;
       }
       if (state.metadata.transferId !== message.transferId || state.terminalState) return;
+      this.recordPerformance(
+        'markReceiverTerminalArrival',
+        message.transferId,
+        arrivalTiming
+      );
       await this.finalizeIncomingFile(message, channelGeneration);
       return;
     }
@@ -727,6 +835,7 @@ class WebRTCManager {
         if (!settled && !this.transitionSenderTerminalState(transfer, 'cancelled')) return;
         transfer.cancelled = true;
         transfer.abortController.abort();
+        this.recordPerformance('cancelTransfer', transfer.transferId);
         this.invokeSenderTerminalCallback(transfer, 'cancelled', () => {
           if (this.onFileTransferCancelled) this.onFileTransferCancelled(transfer.fileName, false);
         });
@@ -806,6 +915,17 @@ class WebRTCManager {
       }
     }
 
+    this.recordPerformance('startTransfer', {
+      transferId: metadata.transferId,
+      direction: 'receive',
+      totalBytes: metadata.size,
+      route: metadata.connectionType || 'unknown',
+      performanceProfile: metadata.performanceProfile || 'Modo inteligente',
+      chunkSize: metadata.chunkSize || 0,
+      bufferThreshold: null,
+      receiverMode: nextState.writeMode
+    });
+
     if (this.onFileTransferStart) {
       this.onFileTransferStart(metadata.name, metadata.size, false, {
         writeMode: nextState.writeMode,
@@ -817,8 +937,8 @@ class WebRTCManager {
     }
 
     this.startNetworkDiagnostics({
+      transferId: metadata.transferId,
       direction: 'receive',
-      fileName: metadata.name,
       totalBytes: metadata.size,
       getBytesTransferred: () => this.receiverState.receivedSize
     });
@@ -887,6 +1007,8 @@ class WebRTCManager {
         channelGeneration !== this.dataChannelGeneration) return;
 
     state.finalizing = true;
+    this.recordPerformance('markDataFinished', metadata.transferId);
+    this.recordPerformance('markReceiverFinalizationStart', metadata.transferId);
 
     if (finishedMessage.size !== metadata.size || state.receivedSize !== metadata.size) {
       await this.failIncomingTransfer('SIZE_MISMATCH');
@@ -951,14 +1073,17 @@ class WebRTCManager {
     }
 
     if (channelGeneration !== this.dataChannelGeneration || this.receiverState !== state) return;
+    this.recordPerformance('markReceiverFinalizationEnd', metadata.transferId);
     this.rememberCompletedTransfer(metadata, completionOptions.writeMode, channelGeneration);
     state.terminalState = 'completed';
     this.stopNetworkDiagnostics();
-    this.sendDeliveryControl({
+    const ackSent = this.sendDeliveryControl({
       type: 'transfer-ack',
       transferId: metadata.transferId,
       size: metadata.size
     });
+    if (ackSent) this.recordPerformance('markAckSent', metadata.transferId);
+    this.recordPerformance('completeTransfer', metadata.transferId);
 
     try {
       if (this.onFileTransferComplete) {
@@ -986,6 +1111,10 @@ class WebRTCManager {
 
     state.terminalState = reason === 'CANCELLED' ? 'cancelled' : 'failed';
     this.stopNetworkDiagnostics();
+    this.recordPerformance(
+      reason === 'CANCELLED' ? 'cancelTransfer' : 'failTransfer',
+      metadata.transferId
+    );
 
     if (notifyPeer) {
       this.sendDeliveryControl({
@@ -1106,11 +1235,15 @@ class WebRTCManager {
     return ['SIZE_MISMATCH', 'WRITE_FAILED', 'FINALIZATION_FAILED', 'CANCELLED'].includes(reason);
   }
 
-  handleTransferAck(message) {
+  handleTransferAck(message, arrivalTiming = undefined) {
     if (!message || message.type !== 'transfer-ack' || !this.isValidTransferTerminalMessage(message, true)) return false;
     const waiter = this.deliveryWaiters.get(message.transferId);
     if (!waiter || waiter.size !== message.size) return false;
-    return this.settleDeliveryWaiter(message.transferId, 'resolve', null, 'completed');
+    const settled = this.settleDeliveryWaiter(message.transferId, 'resolve', null, 'completed');
+    if (settled) {
+      this.recordPerformance('markAckReceived', message.transferId, undefined, arrivalTiming);
+    }
+    return settled;
   }
 
   handleTransferFailed(message) {
@@ -1168,7 +1301,7 @@ class WebRTCManager {
     return true;
   }
 
-  async sendDeliveryTerminal(data, highWaterMark, transfer) {
+  async sendDeliveryTerminal(data, highWaterMark, transfer, sendInstrumentation = null) {
     const terminalController = new AbortController();
     const transferSignal = transfer && transfer.abortController
       ? transfer.abortController.signal
@@ -1191,7 +1324,12 @@ class WebRTCManager {
     if (typeof timeout.unref === 'function') timeout.unref();
 
     try {
-      await this.sendWithBackpressure(data, highWaterMark, terminalController.signal);
+      await this.sendWithBackpressure(
+        data,
+        highWaterMark,
+        terminalController.signal,
+        sendInstrumentation
+      );
     } catch (err) {
       if (timedOut) {
         throw this.createDeliveryError(
@@ -1284,6 +1422,12 @@ class WebRTCManager {
     waiter.retryAbortController.abort();
     this.deliveryWaiters.delete(transferId);
 
+    if (terminalState === 'cancelled') {
+      this.recordPerformance('cancelTransfer', transferId);
+    } else if (terminalState === 'failed') {
+      this.recordPerformance('failTransfer', transferId);
+    }
+
     if (outcome === 'resolve') waiter.resolve();
     else waiter.reject(error);
     return true;
@@ -1347,6 +1491,17 @@ class WebRTCManager {
     }
     this.throwIfTransferCancelled(transfer);
     this.activeSendTransfer = transfer;
+    this.recordPerformance('startTransfer', {
+      transferId: transfer.transferId,
+      direction: 'send',
+      totalBytes: file.size,
+      selectedAt: Number.isFinite(options.selectedAt) ? options.selectedAt : null,
+      route: performanceProfile.connectionType,
+      performanceProfile: performanceProfile.label,
+      chunkSize: CHUNK_SIZE,
+      bufferThreshold: BUFFER_THRESHOLD,
+      receiverMode: 'send'
+    });
 
     if (this.onFileTransferStart) {
       this.onFileTransferStart(file.name, file.size, true, {
@@ -1382,6 +1537,7 @@ class WebRTCManager {
         error.code = 'RECEIVER_NOT_READY';
         throw error;
       }
+      this.recordPerformance('markBytes', transfer.transferId, resumeOffset);
     } catch (err) {
       const resumeWaiter = this.resumeWaiters.get(transfer.transferId);
       if (resumeWaiter) clearTimeout(resumeWaiter.timeout);
@@ -1395,12 +1551,16 @@ class WebRTCManager {
       if (this.activeSendTransfer === transfer) {
         this.activeSendTransfer = null;
       }
+      this.recordPerformance(
+        err && err.name === 'TransferCancelledError' ? 'cancelTransfer' : 'failTransfer',
+        transfer.transferId
+      );
       throw err;
     }
 
     this.startNetworkDiagnostics({
+      transferId: transfer.transferId,
       direction: 'send',
-      fileName: file.name,
       totalBytes: file.size,
       getBytesTransferred: () => transfer.bytesTransferred
     });
@@ -1409,6 +1569,7 @@ class WebRTCManager {
     const stream = file.slice(resumeOffset).stream();
     const reader = stream.getReader();
     transfer.reader = reader;
+    this.recordPerformance('markSenderEnqueueStart', transfer.transferId);
 
     try {
       while (true) {
@@ -1427,7 +1588,19 @@ class WebRTCManager {
             throw new Error('Data connection closed during transfer.');
           }
 
-          const outgoingChunk = sessionKey ? await this.encryptChunk(chunk) : chunk;
+          let outgoingChunk = chunk;
+          if (sessionKey) {
+            const encryptionStartedAt = this.performanceNow();
+            try {
+              outgoingChunk = await this.encryptChunk(chunk);
+            } finally {
+              this.recordPerformance(
+                'addEncryptionTime',
+                transfer.transferId,
+                Math.max(0, this.performanceNow() - encryptionStartedAt)
+              );
+            }
+          }
           this.throwIfTransferCancelled(transfer);
           if (performanceProfile.connectionType === 'relay') {
             transfer.relayChunks += 1;
@@ -1444,12 +1617,16 @@ class WebRTCManager {
           chunkOffset += sliceSize;
           offset += sliceSize;
           transfer.bytesTransferred = offset;
+          this.recordPerformance('markFirstByte', transfer.transferId);
+          this.recordPerformance('markBytes', transfer.transferId, offset);
 
           this.reportTransferProgress(offset, file.size, file.name, true);
         }
       }
 
       this.throwIfTransferCancelled(transfer);
+      this.recordPerformance('markSenderEnqueueEnd', transfer.transferId);
+      this.recordPerformance('markDataFinished', transfer.transferId);
       const deliveryPromise = this.createDeliveryWaiter(transfer.transferId, file.size);
       deliveryPromise.catch(() => {});
       const finishedMessage = {
@@ -1462,13 +1639,26 @@ class WebRTCManager {
         await this.sendDeliveryTerminal(
           JSON.stringify(finishedMessage),
           BUFFER_THRESHOLD,
-          transfer
+          transfer,
+          {
+            beforeSend: (channel) => this.recordBufferedAmount(
+              'markSenderBufferedAmountBeforeTerminal',
+              transfer.transferId,
+              channel
+            ),
+            afterSend: (channel) => this.recordBufferedAmount(
+              'markSenderBufferedAmountAfterTerminal',
+              transfer.transferId,
+              channel
+            )
+          }
         );
       } catch (err) {
         this.rejectDeliveryWaiter(transfer.transferId, err);
         throw err;
       }
 
+      this.recordPerformance('markTerminalSent', transfer.transferId);
       this.armDeliveryAckTimeout(transfer.transferId);
       this.startDeliveryRetry(
         transfer.transferId,
@@ -1480,6 +1670,7 @@ class WebRTCManager {
       );
       await deliveryPromise;
       this.stopNetworkDiagnostics();
+      this.recordPerformance('completeTransfer', transfer.transferId);
 
       this.invokeSenderTerminalCallback(transfer, 'completed', () => {
         if (this.onFileTransferComplete) {
@@ -1513,6 +1704,7 @@ class WebRTCManager {
       }
 
       this.transitionSenderTerminalState(transfer, 'failed');
+      this.recordPerformance('failTransfer', transfer.transferId);
 
       console.error('Error during file stream send:', err);
       throw err;
@@ -1666,6 +1858,7 @@ class WebRTCManager {
     if (!settled && !this.transitionSenderTerminalState(transfer, 'cancelled')) return false;
     transfer.cancelled = true;
     transfer.abortController.abort();
+    this.recordPerformance('cancelTransfer', transfer.transferId);
     this.stopNetworkDiagnostics();
 
     if (transfer.reader) {
@@ -1806,7 +1999,24 @@ class WebRTCManager {
     });
   }
 
-  async sendWithBackpressure(data, highWaterMark, signal) {
+  async waitForBufferedAmountLowMeasured(signal) {
+    const transferId = this.activeSendTransfer && this.activeSendTransfer.transferId;
+    const startedAt = this.performanceNow();
+    try {
+      return await this.waitForBufferedAmountLow(signal);
+    } finally {
+      if (transferId) {
+        this.recordPerformance(
+          'addBackpressureWait',
+          transferId,
+          Math.max(0, this.performanceNow() - startedAt),
+          1
+        );
+      }
+    }
+  }
+
+  async sendWithBackpressure(data, highWaterMark, signal, sendInstrumentation = null) {
     const byteLength = typeof data === 'string'
       ? new TextEncoder().encode(data).byteLength
       : Number(data && (data.byteLength || data.size)) || 0;
@@ -1825,12 +2035,22 @@ class WebRTCManager {
 
       const channel = this.dataChannel;
       if (channel.bufferedAmount + byteLength > highWaterMark) {
-        await this.waitForBufferedAmountLow(signal);
+        await this.waitForBufferedAmountLowMeasured(signal);
         continue;
       }
 
       try {
+        if (sendInstrumentation && typeof sendInstrumentation.beforeSend === 'function') {
+          try {
+            sendInstrumentation.beforeSend(channel);
+          } catch (err) {}
+        }
         channel.send(data);
+        if (sendInstrumentation && typeof sendInstrumentation.afterSend === 'function') {
+          try {
+            sendInstrumentation.afterSend(channel);
+          } catch (err) {}
+        }
         return;
       } catch (err) {
         const queueIsFull = err && (
@@ -1846,17 +2066,18 @@ class WebRTCManager {
           bufferedAmount: channel.bufferedAmount,
           chunkBytes: byteLength
         });
-        await this.waitForBufferedAmountLow(signal);
+        await this.waitForBufferedAmountLowMeasured(signal);
       }
     }
   }
 
   startNetworkDiagnostics(transferInfo) {
     this.stopNetworkDiagnostics();
+    if (!this.hasNetworkDiagnosticsConsumer()) return false;
 
     this.diagnosticsTransfer = transferInfo;
     this.lastDiagnosticsBytes = transferInfo.getBytesTransferred();
-    this.lastDiagnosticsTimestamp = performance.now();
+    this.lastDiagnosticsTimestamp = this.performanceNow();
 
     this.emitNetworkDiagnostics().catch((err) => {
       console.warn('Initial WebRTC diagnostics failed:', err);
@@ -1867,9 +2088,16 @@ class WebRTCManager {
         console.warn('WebRTC diagnostics failed:', err);
       });
     }, 2000);
+    return true;
+  }
+
+  hasNetworkDiagnosticsConsumer() {
+    return typeof this.onNetworkDiagnostics === 'function' ||
+      Boolean(this.performanceDiagnostics);
   }
 
   stopNetworkDiagnostics() {
+    this.diagnosticsGeneration += 1;
     if (this.diagnosticsInterval) {
       clearInterval(this.diagnosticsInterval);
       this.diagnosticsInterval = null;
@@ -1881,48 +2109,53 @@ class WebRTCManager {
   }
 
   async emitNetworkDiagnostics() {
-    if (!this.peerConnection || !this.diagnosticsTransfer || !this.onNetworkDiagnostics) return;
+    if (!this.hasNetworkDiagnosticsConsumer()) {
+      this.stopNetworkDiagnostics();
+      return;
+    }
+    if (!this.peerConnection || !this.diagnosticsTransfer) return;
 
-    const now = performance.now();
-    const bytesTransferred = this.diagnosticsTransfer.getBytesTransferred();
+    const diagnosticsTransfer = this.diagnosticsTransfer;
+    const diagnosticsGeneration = this.diagnosticsGeneration;
+    const now = this.performanceNow();
+    const bytesTransferred = diagnosticsTransfer.getBytesTransferred();
     const elapsedSeconds = Math.max((now - this.lastDiagnosticsTimestamp) / 1000, 0.001);
     const speed = Math.max((bytesTransferred - this.lastDiagnosticsBytes) / elapsedSeconds, 0);
-    const percent = this.diagnosticsTransfer.totalBytes > 0
-      ? Math.min(100, (bytesTransferred / this.diagnosticsTransfer.totalBytes) * 100)
+    const percent = diagnosticsTransfer.totalBytes > 0
+      ? Math.min(100, (bytesTransferred / diagnosticsTransfer.totalBytes) * 100)
       : 0;
 
     const connection = await this.getActiveCandidatePairDetails();
+    if (this.diagnosticsTransfer !== diagnosticsTransfer ||
+        this.diagnosticsGeneration !== diagnosticsGeneration ||
+        !this.hasNetworkDiagnosticsConsumer()) return;
+
     const metrics = {
       connectionType: connection.connectionType,
       speed,
       qualityLabel: this.getQualityLabel(connection.connectionType, speed),
       isLocal: connection.connectionType === 'host',
       percent,
-      direction: this.diagnosticsTransfer.direction,
-      fileName: this.diagnosticsTransfer.fileName
+      direction: diagnosticsTransfer.direction
     };
 
-    this.transferDiagnostics.bytesTransferred = bytesTransferred;
-    this.transferDiagnostics.totalBytes = this.diagnosticsTransfer.totalBytes;
-    this.transferDiagnostics.percent = percent;
-    this.transferDiagnostics.speedBytesPerSecond = speed;
-    this.transferDiagnostics.speedMBps = speed / (1024 * 1024);
-    this.transferDiagnostics.direction = this.diagnosticsTransfer.direction;
-    this.transferDiagnostics.fileName = this.diagnosticsTransfer.fileName;
-    this.transferDiagnostics.updatedAt = new Date().toISOString();
+    if (diagnosticsTransfer.transferId) {
+      this.recordPerformance('updateTransfer', diagnosticsTransfer.transferId, {
+        route: connection.connectionType
+      });
+    }
 
     console.info('[AirDows] Transfer metrics', {
-      fileName: this.transferDiagnostics.fileName,
-      direction: this.transferDiagnostics.direction,
-      speedMBps: Number(this.transferDiagnostics.speedMBps.toFixed(2)),
-      percent: Number(this.transferDiagnostics.percent.toFixed(2)),
-      bytes: `${bytesTransferred}/${this.transferDiagnostics.totalBytes}`
+      direction: diagnosticsTransfer.direction,
+      speedMBps: Number((speed / (1024 * 1024)).toFixed(2)),
+      percent: Number(percent.toFixed(2)),
+      bytes: `${bytesTransferred}/${diagnosticsTransfer.totalBytes}`
     });
 
     this.lastDiagnosticsBytes = bytesTransferred;
     this.lastDiagnosticsTimestamp = now;
     this.lastDiagnosticsMetrics = metrics;
-    this.onNetworkDiagnostics(metrics);
+    if (this.onNetworkDiagnostics) this.onNetworkDiagnostics(metrics);
   }
 
   calculatePercent(bytesTransferred, totalBytes) {
@@ -2012,6 +2245,7 @@ class WebRTCManager {
   close() {
     console.log('Cleaning up WebRTC connections...');
     this.isClosing = true;
+    this.recordPerformance('markDataChannelState', 'closed');
     this.recoveryPrepared = false;
     this.sessionGeneration += 1;
     this.peerConnectionGeneration += 1;
@@ -2028,6 +2262,10 @@ class WebRTCManager {
         'cancelled'
       );
       if (!settled) this.transitionSenderTerminalState(this.activeSendTransfer, 'cancelled');
+      this.recordPerformance('cancelTransfer', this.activeSendTransfer.transferId);
+    }
+    if (this.receiverState && this.receiverState.metadata) {
+      this.recordPerformance('cancelTransfer', this.receiverState.metadata.transferId);
     }
     this.rejectAllDeliveryWaiters('WEBRTC_CLOSED', 'WebRTC was closed before delivery confirmation.');
     this.rejectAllResumeWaiters('WEBRTC_CLOSED', 'WebRTC was closed before receiver readiness.');
