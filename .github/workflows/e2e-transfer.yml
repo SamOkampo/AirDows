@@ -1,0 +1,53 @@
+name: AirDows transfer baseline
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  transfer-baseline:
+    name: Unit and critical E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run unit tests
+        run: npm test
+
+      - name: Check JavaScript syntax
+        run: npm run test:syntax
+
+      - name: Check patch whitespace
+        run: git diff --check "${{ github.event.pull_request.base.sha }}...HEAD"
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run critical transfer E2E
+        id: e2e
+        run: npm run test:e2e
+
+      - name: Upload private E2E failure artifacts
+        if: failure() && steps.e2e.outcome == 'failure'
+        uses: actions/upload-artifact@v7
+        with:
+          name: airdows-e2e-failure-${{ github.run_id }}
+          path: test-results/
+          if-no-files-found: warn
+          retention-days: 7

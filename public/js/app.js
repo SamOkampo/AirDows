@@ -132,13 +132,28 @@ function submitManualJoin(rawCode, { onInvalid, onValid }) {
   return true;
 }
 
+function isPerformanceDiagnosticsRequested(helper, documentUrl) {
+  try {
+    return typeof helper === 'function' &&
+      typeof helper.isRequested === 'function' &&
+      helper.isRequested(documentUrl) === true;
+  } catch (err) {
+    return false;
+  }
+}
+
 const pairingPrivacy = createPairingPrivacyFacade(window.PairingLinkPrivacy);
 const pairingLinkBootstrap = pairingPrivacy.consumeBootstrap();
 
 document.addEventListener('DOMContentLoaded', () => {
   // 1. Initialize Managers
   const socketManager = new SocketManager();
-  const webrtcManager = new WebRTCManager(socketManager);
+  const webrtcManager = new WebRTCManager(socketManager, {
+    performanceDiagnosticsEnabled: isPerformanceDiagnosticsRequested(
+      window.AirDowsTransferPerformanceDiagnostics,
+      document.URL
+    )
+  });
   const localAiManager = typeof LocalAIManager === 'function' ? new LocalAIManager() : null;
 
   // 2. DOM Elements
@@ -709,6 +724,7 @@ document.addEventListener('DOMContentLoaded', () => {
         transferId: typeof crypto !== 'undefined' && crypto.randomUUID
           ? crypto.randomUUID()
           : `queue-${Date.now()}-${queueIdCounter}`,
+        selectedAt: performance.now(),
         status: 'pending',
         insight: localAiManager ? localAiManager.analyzeFile(file) : null
       });
@@ -753,7 +769,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
       try {
         await webrtcManager.sendFile(nextItem.file, {
-          transferId: nextItem.transferId
+          transferId: nextItem.transferId,
+          selectedAt: nextItem.selectedAt
         });
         if (nextItem.status !== 'cancelled') {
           nextItem.status = 'done';
@@ -923,6 +940,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   socketManager.onPaired = ({ role, peerId, code, recovered = false, connectionGeneration = 0 }) => {
     console.log('Pairing session established');
+    if (!recovered) webrtcManager.markPairingEstablished();
     setPetState('connecting');
     roomCode = code;
     activeSocketGeneration = connectionGeneration;
@@ -1318,6 +1336,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // --- UI CONTROLS & LISTENERS ---
   btnGenerate.addEventListener('click', () => {
+    webrtcManager.markPairingStarted();
     socketManager.generateCode();
   });
 
@@ -1332,6 +1351,7 @@ document.addEventListener('DOMContentLoaded', () => {
     submitManualJoin(code, {
       onInvalid: () => showToast(translate('invalid_code')),
       onValid: () => {
+        webrtcManager.markPairingStarted();
         updateOnboarding(2);
         socketManager.joinCode(code);
       }
@@ -1529,6 +1549,7 @@ document.addEventListener('DOMContentLoaded', () => {
     pendingAutoJoinCode = null;
     if (!code) return;
 
+    webrtcManager.markPairingStarted();
     updateOnboarding(2);
     socketManager.joinCode(code);
   }

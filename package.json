@@ -5,6 +5,9 @@
   "main": "server.js",
   "scripts": {
     "test": "node --test",
+    "test:e2e": "node e2e/run.js",
+    "test:syntax": "node --check server.js && node --check pairing-security.js && node --check metrics-store.js && node --check public/sw.js && node --check public/js/app.js && node --check public/js/language-preference.js && node --check public/js/local-ai-manager.js && node --check public/js/pairing-link-privacy.js && node --check public/js/qr-manager.js && node --check public/js/qrcode-generator.js && node --check public/js/runtime-config.js && node --check public/js/socket-manager.js && node --check public/js/transfer-performance-diagnostics.js && node --check public/js/webrtc-manager.js && node --check test/transfer-performance-diagnostics.test.js && node --check test/e2e-infrastructure.test.js && node --check playwright.config.js && node --check e2e/run.js && node --check e2e/server.js && node --check e2e/url-policy.js && node --check e2e/transfer-performance.spec.js",
+    "test:ci": "npm test && npm run test:syntax && npm run test:e2e",
     "start": "node server.js",
     "native:sync": "npx cap sync android",
     "native:open": "npx cap open android",
@@ -21,6 +24,7 @@
   },
   "devDependencies": {
     "@capacitor/cli": "^8.4.2",
+    "@playwright/test": "^1.62.0",
     "typescript": "^5.9.3"
   }
 }
