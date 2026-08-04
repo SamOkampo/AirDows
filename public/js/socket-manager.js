@@ -119,8 +119,6 @@ class SocketManager {
     this.onConnect = null;
     this.onDisconnect = null;
     this.onIceConfig = null; // New: Callback for ICE configuration
-    this.onRelayBudget = null;
-    this.onProRequired = null;
     this.onRecoveryStateChange = null;
     this.onRecoveryWaiting = null;
     this.onRecoveryFailed = null;
@@ -205,16 +203,6 @@ class SocketManager {
     socket.on('connect_error', () => {
       if (this.socket !== socket) return;
       this.signalingConnectRequested = false;
-    });
-
-    socket.on('relay-budget', (budget) => {
-      if (this.socket !== socket) return;
-      if (this.onRelayBudget) this.onRelayBudget(budget);
-    });
-
-    socket.on('pro-required', (details) => {
-      if (this.socket !== socket) return;
-      if (this.onProRequired) this.onProRequired(details);
     });
 
     socket.on('code-generated', (data) => {
@@ -474,17 +462,6 @@ class SocketManager {
     }
   }
 
-  sendRelayUsage(bytes) {
-    if (this.socket && this.socket.connected) {
-      this.socket.emit('relay-usage', { bytes });
-    }
-  }
-
-  requestRelayUpgrade() {
-    if (this.socket && this.socket.connected) {
-      this.socket.emit('relay-budget-exhausted');
-    }
-  }
 }
 
 if (typeof module === 'object' && module.exports) {

@@ -83,7 +83,6 @@ function createManager(options = {}) {
   manager.waitForEncryption = async () => null;
   manager.startNetworkDiagnostics = () => {};
   manager.stopNetworkDiagnostics = () => {};
-  manager.flushRelayUsage = () => {};
   manager.reportTransferError = () => {};
   return manager;
 }

@@ -67,7 +67,6 @@ TURN_URLS=<comma-separated-turn-servers>
 TURN_USERNAME=<turn-username>
 TURN_CREDENTIAL=<turn-credential>
 ADMIN_DASHBOARD_TOKEN=<admin-auth-token>
-FREE_RELAY_BUDGET_BYTES=262144000
 METRICS_DATABASE_URL=postgresql://user:password@host:5432/dbname
 METRICS_DATABASE_SSL=true
 TELEGRAM_BOT_TOKEN=<telegram-bot-token>

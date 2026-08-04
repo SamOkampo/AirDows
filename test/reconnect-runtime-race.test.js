@@ -323,8 +323,7 @@ test('a recovered offer queued before reconnect creates an answer on the replace
   const rtc = installFakeRtc();
   const sentSignals = [];
   const manager = new WebRTCManager({
-    sendSignal: (room, data) => sentSignals.push({ room, data }),
-    sendRelayUsage() {}
+    sendSignal: (room, data) => sentSignals.push({ room, data })
   });
   manager.rtcConfig = { iceServers: [] };
   manager.role = 'receiver';
@@ -353,7 +352,7 @@ test('a recovered offer queued before reconnect creates an answer on the replace
 
 test('recovered ICE candidates queued before reconnect are processed after the offer', async () => {
   const rtc = installFakeRtc();
-  const manager = new WebRTCManager({ sendSignal() {}, sendRelayUsage() {} });
+  const manager = new WebRTCManager({ sendSignal() {} });
   manager.rtcConfig = { iceServers: [] };
   manager.role = 'receiver';
   manager.roomCode = '1234';
@@ -374,7 +373,7 @@ test('recovered ICE candidates queued before reconnect are processed after the o
 
 test('stale queued signals from a previous recovery generation remain discarded', async () => {
   const rtc = installFakeRtc();
-  const manager = new WebRTCManager({ sendSignal() {}, sendRelayUsage() {} });
+  const manager = new WebRTCManager({ sendSignal() {} });
   manager.rtcConfig = { iceServers: [] };
   manager.role = 'receiver';
   manager.roomCode = '1234';
@@ -398,7 +397,7 @@ test('stale queued signals from a previous recovery generation remain discarded'
 });
 
 test('reconnect flushes current signals before an initiator starts a new offer', () => {
-  const manager = new WebRTCManager({ sendSignal() {}, sendRelayUsage() {} });
+  const manager = new WebRTCManager({ sendSignal() {} });
   manager.rtcConfig = { iceServers: [] };
   manager.role = 'initiator';
   manager.roomCode = '1234';
@@ -724,7 +723,7 @@ test('a stale recovery timeout cannot clear a newly paired manual room', () => {
 
 test('a fresh manual pairing discards signals queued after the prior session closed', async () => {
   const rtc = installFakeRtc();
-  const manager = new WebRTCManager({ sendSignal() {}, sendRelayUsage() {} });
+  const manager = new WebRTCManager({ sendSignal() {} });
   manager.rtcConfig = { iceServers: [] };
   manager.encryption.available = false;
 

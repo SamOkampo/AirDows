@@ -99,7 +99,7 @@ class FakeDataChannel {
 }
 
 function createRtcManager() {
-  const manager = new WebRTCManager({ sendSignal() {}, sendRelayUsage() {} });
+  const manager = new WebRTCManager({ sendSignal() {} });
   manager.encryption.available = false;
   manager.rtcConfig = { iceServers: [] };
   return manager;
@@ -900,8 +900,7 @@ test('delayed signaling work from an obsolete peer connection cannot mutate reco
   let answersCreated = 0;
   const signals = [];
   const manager = new WebRTCManager({
-    sendSignal: (...args) => signals.push(args),
-    sendRelayUsage() {}
+    sendSignal: (...args) => signals.push(args)
   });
   manager.role = 'receiver';
   manager.roomCode = '1234';

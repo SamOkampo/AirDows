@@ -63,8 +63,6 @@ class WebRTCManager {
     this.peerConnectionGeneration = 0;
     this.recoveryPrepared = false;
     this.encryption = this.createEncryptionState();
-    this.relayBudget = { plan: 'free', limitBytes: Number.POSITIVE_INFINITY, usedBytes: 0, blocked: false };
-    this.pendingRelayUsageBytes = 0;
 
     this.diagnosticsInterval = null;
     this.diagnosticsTransfer = null;
@@ -799,7 +797,7 @@ class WebRTCManager {
         nextState.fileHandle = fileHandle;
         nextState.writable = await fileHandle.createWritable();
         nextState.writeMode = 'disk';
-        console.log('Pro mode enabled: receiving file directly to disk.');
+        console.log('Direct-to-disk mode enabled.');
       } catch (err) {
         console.warn('Direct-to-disk mode unavailable or declined. Falling back to memory mode:', err);
         nextState.writeMode = 'memory';
@@ -1334,7 +1332,6 @@ class WebRTCManager {
       cancelled: false,
       terminalState: null,
       terminalCallbackInvoked: false,
-      proRequired: false,
       abortController: new AbortController(),
       bytesTransferred: 0,
       totalBytes: file.size,
@@ -1433,19 +1430,7 @@ class WebRTCManager {
           const outgoingChunk = sessionKey ? await this.encryptChunk(chunk) : chunk;
           this.throwIfTransferCancelled(transfer);
           if (performanceProfile.connectionType === 'relay') {
-            if (!this.reserveRelayBudget(outgoingChunk.byteLength)) {
-              transfer.proRequired = true;
-              this.notifyPeerTransferCancelled(transfer);
-              const error = this.createProRequiredError();
-              this.transitionSenderTerminalState(transfer, 'failed');
-              this.invokeSenderTerminalCallback(transfer, 'failed', () => {
-                this.reportTransferError('relay-budget', error, file.name);
-              });
-              throw error;
-            }
-
             transfer.relayChunks += 1;
-            this.queueRelayUsage(outgoingChunk.byteLength);
             if (this.onRelayUsage) {
               this.onRelayUsage({ chunkSize: CHUNK_SIZE, chunks: 1 });
             }
@@ -1509,11 +1494,6 @@ class WebRTCManager {
     } catch (err) {
       this.stopNetworkDiagnostics();
 
-      if (transfer.proRequired || err.name === 'ProRequiredError') {
-        this.transitionSenderTerminalState(transfer, 'failed');
-        throw this.createProRequiredError();
-      }
-
       if (transfer.cancelled || err.name === 'AbortError') {
         this.transitionSenderTerminalState(transfer, 'cancelled');
         throw this.createTransferCancelledError();
@@ -1541,7 +1521,6 @@ class WebRTCManager {
         transfer.transferId,
         this.createDeliveryError('DELIVERY_ABORTED', 'Delivery confirmation was abandoned.')
       );
-      this.flushRelayUsage();
       reader.releaseLock();
       if (this.activeSendTransfer === transfer) {
         this.activeSendTransfer = null;
@@ -1656,77 +1635,6 @@ class WebRTCManager {
 
   async getAdaptiveChunkSize() {
     return (await this.selectPerformanceProfile()).chunkSize;
-  }
-
-  setRelayBudget(budget = {}) {
-    const limitBytes = Number.isSafeInteger(budget.limitBytes) && budget.limitBytes >= 0
-      ? budget.limitBytes
-      : Number.POSITIVE_INFINITY;
-    const usedBytes = Number.isSafeInteger(budget.usedBytes) && budget.usedBytes >= 0
-      ? Math.min(budget.usedBytes, limitBytes)
-      : 0;
-
-    this.relayBudget = {
-      plan: budget.plan === 'pro' ? 'pro' : 'free',
-      limitBytes,
-      usedBytes,
-      blocked: Boolean(budget.blocked)
-    };
-  }
-
-  reserveRelayBudget(bytes) {
-    if (this.relayBudget.plan === 'pro') return true;
-    if (this.relayBudget.blocked || this.relayBudget.usedBytes + bytes > this.relayBudget.limitBytes) {
-      this.relayBudget.blocked = true;
-      this.flushRelayUsage();
-      this.socketManager.requestRelayUpgrade();
-      return false;
-    }
-
-    this.relayBudget.usedBytes += bytes;
-    return true;
-  }
-
-  queueRelayUsage(bytes) {
-    this.pendingRelayUsageBytes += bytes;
-    if (this.pendingRelayUsageBytes >= 1024 * 1024) this.flushRelayUsage();
-  }
-
-  flushRelayUsage() {
-    if (!this.pendingRelayUsageBytes) return;
-    this.socketManager.sendRelayUsage(this.pendingRelayUsageBytes);
-    this.pendingRelayUsageBytes = 0;
-  }
-
-  createProRequiredError() {
-    const error = new Error('The free relay limit has been reached.');
-    error.name = 'ProRequiredError';
-    error.code = 'RELAY_LIMIT_REACHED';
-    return error;
-  }
-
-  notifyPeerTransferCancelled(transfer) {
-    this.sendDeliveryControl({
-      type: 'transfer-cancelled',
-      transferId: transfer.transferId
-    });
-  }
-
-  handleProRequired() {
-    this.relayBudget.blocked = true;
-    const transfer = this.activeSendTransfer;
-    if (!transfer || transfer.connectionType !== 'relay' || transfer.proRequired) return;
-
-    transfer.proRequired = true;
-    transfer.abortController.abort();
-    if (transfer.reader) transfer.reader.cancel().catch(() => {});
-    this.notifyPeerTransferCancelled(transfer);
-    const error = this.createProRequiredError();
-    const settled = this.rejectDeliveryWaiter(transfer.transferId, error, 'failed');
-    if (!settled) this.transitionSenderTerminalState(transfer, 'failed');
-    this.invokeSenderTerminalCallback(transfer, 'failed', () => {
-      this.reportTransferError('relay-budget', error, transfer.fileName);
-    });
   }
 
   reportTransferProgress(bytesTransferred, totalBytes, fileName, isSending) {
