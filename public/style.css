@@ -441,6 +441,149 @@ body {
   color: #38e6ad;
 }
 
+.role-selection,
+.pairing-flow {
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.role-selection-header {
+  margin-bottom: 22px;
+  text-align: center;
+}
+
+.role-selection-header h2 {
+  margin-bottom: 8px;
+  font-size: 1.55rem;
+  letter-spacing: -0.02em;
+}
+
+.role-selection-header p,
+.keep-open-note,
+.room-instruction {
+  color: var(--text-secondary);
+  font-size: 0.84rem;
+  line-height: 1.55;
+}
+
+.role-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.role-option {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  align-items: center;
+  gap: 14px;
+  min-height: 120px;
+  padding: 20px;
+  border: 1px solid var(--border-light);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--text-primary);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition: var(--transition-smooth);
+}
+
+.role-option:hover,
+.role-option:focus-visible {
+  border-color: rgba(56, 189, 248, 0.62);
+  background: rgba(56, 189, 248, 0.08);
+  outline: none;
+  transform: translateY(-2px);
+}
+
+.role-option-icon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 13px;
+  background: rgba(56, 189, 248, 0.12);
+  color: #7dd3fc;
+  font-size: 1.4rem;
+  font-weight: 700;
+}
+
+.role-option span:last-child {
+  display: grid;
+  gap: 7px;
+}
+
+.role-option strong {
+  font-size: 0.98rem;
+}
+
+.role-option small {
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  line-height: 1.45;
+}
+
+.btn-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 22px;
+  padding: 7px 0;
+  border: 0;
+  background: transparent;
+  color: #93c5fd;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.pairing-flow-panel {
+  max-width: 440px;
+  margin: 0 auto;
+}
+
+.room-display {
+  display: grid;
+  gap: 16px;
+  text-align: center;
+}
+
+.room-status {
+  color: #6ee7b7;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.receiver-waiting-panel {
+  display: grid;
+  gap: 5px;
+  margin-bottom: 20px;
+  padding: 16px;
+  border: 1px solid rgba(56, 230, 173, 0.2);
+  border-radius: 14px;
+  background: rgba(56, 230, 173, 0.06);
+}
+
+.receiver-waiting-panel strong {
+  color: #6ee7b7;
+}
+
+.receiver-waiting-panel span {
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+}
+
+#transfer-view[data-transfer-role="receive"] .sender-only,
+#transfer-view[data-transfer-role="receive"] #queue-container {
+  display: none !important;
+}
+
+#transfer-view[data-transfer-role="receive"] .transfer-tools {
+  grid-template-columns: 1fr;
+}
+
 .pairing-grid {
   display: grid;
   grid-template-columns: 1fr 80px 1fr;
@@ -549,6 +692,16 @@ body {
 .btn-primary:hover {
   background-color: var(--color-primary-hover);
   transform: translateY(-1px);
+}
+
+.btn:disabled,
+.btn:disabled:hover {
+  background: rgba(148, 163, 184, 0.12);
+  border-color: rgba(148, 163, 184, 0.16);
+  box-shadow: none;
+  color: rgba(203, 213, 225, 0.45);
+  cursor: not-allowed;
+  transform: none;
 }
 
 .btn-secondary {
@@ -1197,6 +1350,25 @@ body {
   padding: 12px 14px;
 }
 
+.queue-file-info {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  column-gap: 10px;
+  min-width: 0;
+}
+
+.queue-file-icon {
+  display: grid;
+  grid-row: 1 / span 2;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: rgba(56, 189, 248, 0.1);
+  color: #7dd3fc;
+  font-size: 1rem;
+}
+
 .queue-item.active {
   border-left: 3px solid var(--color-primary);
 }
@@ -1221,6 +1393,15 @@ body {
   color: var(--text-secondary);
   font-size: 0.76rem;
   margin-top: 3px;
+}
+
+.queue-review-actions {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.45fr) minmax(220px, 1fr);
+  gap: 12px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-light);
 }
 
 .queue-status {
@@ -1551,6 +1732,11 @@ body {
   .pairing-grid {
     grid-template-columns: 1fr;
     gap: 24px;
+  }
+
+  .role-options,
+  .queue-review-actions {
+    grid-template-columns: 1fr;
   }
   
   .pairing-divider {

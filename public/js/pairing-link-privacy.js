@@ -23,12 +23,17 @@
     pwa_installed: [],
     file_queued: ['file_count', 'size_bucket'],
     room_created: [],
-    room_joined: ['role'],
-    connection_established: [],
-    transfer_started: ['direction', 'size_bucket', 'mode'],
-    transfer_completed: ['direction', 'route', 'size_bucket'],
-    transfer_failed: ['direction', 'route', 'failure_type'],
-    transfer_cancelled: ['direction', 'initiated_by'],
+    transfer_role_selected: ['role', 'flow_version'],
+    pairing_code_generated: ['role', 'flow_version'],
+    pairing_code_submitted: ['entry', 'flow_version'],
+    room_joined: ['role', 'transfer_role', 'flow_version'],
+    connection_established: ['transfer_role', 'flow_version'],
+    files_selected: ['file_count', 'size_bucket', 'flow_version'],
+    send_confirmed: ['file_count', 'size_bucket', 'flow_version'],
+    transfer_started: ['direction', 'size_bucket', 'mode', 'flow_version'],
+    transfer_completed: ['direction', 'route', 'size_bucket', 'flow_version'],
+    transfer_failed: ['direction', 'route', 'failure_type', 'flow_version'],
+    transfer_cancelled: ['direction', 'initiated_by', 'flow_version'],
     route_selected: ['route']
   });
 

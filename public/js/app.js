@@ -1,3 +1,94 @@
+window.FirstTransferFlow = Object.freeze((() => {
+  const FLOW_VERSION = 'first-transfer-v2';
+
+  function getPendingSelection(queue) {
+    return queue.filter((item) => item.status === 'pending' && item.confirmed !== true);
+  }
+
+  function addPendingFiles(queue, files, createItem) {
+    const addedItems = [];
+    for (const file of Array.from(files || [])) {
+      if (!file) continue;
+      const item = createItem(file);
+      item.status = 'pending';
+      item.confirmed = false;
+      queue.push(item);
+      addedItems.push(item);
+    }
+    return addedItems;
+  }
+
+  function removePendingFile(queue, id) {
+    const index = queue.findIndex((item) => (
+      item.id === id && item.status === 'pending' && item.confirmed !== true
+    ));
+    if (index < 0) return false;
+    queue.splice(index, 1);
+    return true;
+  }
+
+  function clearPendingFiles(queue) {
+    let removed = 0;
+    for (let index = queue.length - 1; index >= 0; index -= 1) {
+      const item = queue[index];
+      if (item.status === 'pending' && item.confirmed !== true) {
+        queue.splice(index, 1);
+        removed += 1;
+      }
+    }
+    return removed;
+  }
+
+  function getSelectionSummary(queue) {
+    const selection = getPendingSelection(queue);
+    return {
+      count: selection.length,
+      totalBytes: selection.reduce((total, item) => total + Number(item.file?.size || 0), 0)
+    };
+  }
+
+  function canConfirmSend(queue, connected) {
+    return connected === true && getPendingSelection(queue).length > 0;
+  }
+
+  function confirmPendingFiles(queue, connected) {
+    if (!canConfirmSend(queue, connected)) return [];
+    const confirmedItems = getPendingSelection(queue);
+    confirmedItems.forEach((item) => {
+      item.confirmed = true;
+    });
+    return confirmedItems;
+  }
+
+  function findNextConfirmedFile(queue) {
+    return queue.find((item) => item.status === 'pending' && item.confirmed === true) || null;
+  }
+
+  function getFileKindKey(file) {
+    const type = String(file?.type || '').toLowerCase();
+    const name = String(file?.name || '').toLowerCase();
+    if (type.startsWith('image/')) return 'file_kind_image';
+    if (type.startsWith('video/')) return 'file_kind_video';
+    if (type.startsWith('audio/')) return 'file_kind_audio';
+    if (type.includes('pdf') || name.endsWith('.pdf')) return 'file_kind_document';
+    if (/\.(zip|rar|7z|tar|gz)$/.test(name)) return 'file_kind_archive';
+    return 'file_kind_file';
+  }
+
+  return {
+    FLOW_VERSION,
+    addPendingFiles,
+    canConfirmSend,
+    clearPendingFiles,
+    confirmPendingFiles,
+    findNextConfirmedFile,
+    getFileKindKey,
+    getPendingSelection,
+    getSelectionSummary,
+    removePendingFile
+  };
+})());
+
 function createPairingPrivacyFacade(helper) {
   const fallbackBootstrap = () => ({ code: null, entry: 'direct' });
 
@@ -161,6 +252,13 @@ document.addEventListener('DOMContentLoaded', () => {
   const transferView = document.getElementById('transfer-view');
   
   // Setup Elements
+  const roleSelection = document.getElementById('role-selection');
+  const pairingFlow = document.getElementById('pairing-flow');
+  const receiveFlow = document.getElementById('receive-flow');
+  const sendFlow = document.getElementById('send-flow');
+  const btnRoleSend = document.getElementById('btn-role-send');
+  const btnRoleReceive = document.getElementById('btn-role-receive');
+  const btnChangeRole = document.getElementById('btn-change-role');
   const btnGenerate = document.getElementById('btn-generate');
   const codeDisplayWrapper = document.getElementById('code-display-wrapper');
   const d1 = document.getElementById('d1');
@@ -168,6 +266,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const d3 = document.getElementById('d3');
   const d4 = document.getElementById('d4');
   const qrcodeDiv = document.getElementById('qrcode');
+  const btnCopyLink = document.getElementById('btn-copy-link');
   const joinCodeInput = document.getElementById('join-code-input');
   const btnJoin = document.getElementById('btn-join');
   const sharedFilesNotice = document.getElementById('shared-files-notice');
@@ -209,6 +308,10 @@ document.addEventListener('DOMContentLoaded', () => {
   const queueSummary = document.getElementById('queue-summary');
   const queueList = document.getElementById('queue-list');
   const btnAddToQueue = document.getElementById('btn-add-to-queue');
+  const btnClearQueue = document.getElementById('btn-clear-queue');
+  const btnConfirmSend = document.getElementById('btn-confirm-send');
+  const sendButtonLabel = document.getElementById('send-button-label');
+  const receiverWaitingPanel = document.getElementById('receiver-waiting-panel');
 
   // Completed Elements
   const completedCard = document.getElementById('completed-card');
@@ -229,6 +332,8 @@ document.addEventListener('DOMContentLoaded', () => {
   // State Variables
   let roomCode = null;
   let qrCodeInstance = null;
+  let currentPairingLink = null;
+  let selectedTransferRole = null;
   let transferStartTime = 0;
   let lastProgressRenderTime = 0;
   let currentFileTransferSize = 0; // New: To track size for history reporting
@@ -261,6 +366,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const appOpenEntry = pairingLinkBootstrap.entry;
   let autoJoinAttempted = false;
   pairingLinkBootstrap.code = null;
+  const firstTransferFlow = window.FirstTransferFlow;
+  const flowVersion = firstTransferFlow.FLOW_VERSION;
 
   // --- HELPERS ---
   function trackAnalytics(eventName, properties = {}) {
@@ -281,6 +388,13 @@ document.addEventListener('DOMContentLoaded', () => {
     } else {
       window.addEventListener('load', sendWhenLoaded, { once: true });
     }
+  }
+
+  function trackFlowAnalytics(eventName, properties = {}) {
+    trackAnalytics(eventName, {
+      ...properties,
+      flow_version: flowVersion
+    });
   }
 
   function getFileSizeBucket(bytes) {
@@ -389,6 +503,50 @@ document.addEventListener('DOMContentLoaded', () => {
       setupView.classList.add('hidden');
       transferView.classList.remove('hidden');
     }
+  }
+
+  function showRoleSelection() {
+    selectedTransferRole = null;
+    currentPairingLink = null;
+    transferView.removeAttribute('data-transfer-role');
+    roleSelection.classList.remove('hidden');
+    pairingFlow.classList.add('hidden');
+    receiveFlow.classList.add('hidden');
+    sendFlow.classList.add('hidden');
+    btnCopyLink.disabled = true;
+  }
+
+  function requestPairingCode() {
+    webrtcManager.markPairingStarted();
+    socketManager.generateCode();
+  }
+
+  function selectTransferRole(role, { track = true, generateCode = true } = {}) {
+    if (role !== 'send' && role !== 'receive') return false;
+    selectedTransferRole = role;
+    transferView.dataset.transferRole = role;
+    roleSelection.classList.add('hidden');
+    pairingFlow.classList.remove('hidden');
+    receiveFlow.classList.toggle('hidden', role !== 'receive');
+    sendFlow.classList.toggle('hidden', role !== 'send');
+    if (track) trackFlowAnalytics('transfer_role_selected', { role });
+
+    if (role === 'receive') {
+      if (generateCode) requestPairingCode();
+    } else {
+      queueMicrotask(() => joinCodeInput.focus());
+    }
+    return true;
+  }
+
+  function updateConnectedStatus() {
+    if (!p2pConnected) return;
+    const hasPendingSelection = firstTransferFlow.getPendingSelection(transferQueue).length > 0;
+    connectionStatusText.textContent = translate(
+      selectedTransferRole === 'send' && hasPendingSelection
+        ? 'files_ready_to_send'
+        : 'devices_connected'
+    );
   }
 
   function setPetState(state) {
@@ -659,10 +817,17 @@ document.addEventListener('DOMContentLoaded', () => {
   function renderQueue() {
     queueList.innerHTML = '';
     const visibleItems = transferQueue.filter(item => item.status !== 'removed');
-    const waitingCount = transferQueue.filter(item => item.status === 'pending').length;
+    const selection = firstTransferFlow.getSelectionSummary(transferQueue);
 
-    queueSummary.textContent = `${waitingCount} ${translate('queue_waiting')}`;
+    queueSummary.textContent = `${selection.count} ${translate('queue_waiting')}`;
     queueContainer.classList.toggle('hidden', visibleItems.length === 0);
+    btnClearQueue.disabled = selection.count === 0;
+    btnConfirmSend.disabled = !firstTransferFlow.canConfirmSend(transferQueue, p2pConnected);
+    sendButtonLabel.textContent = selection.count > 0
+      ? translate('btn_send_files_summary')
+        .replace('{count}', selection.count)
+        .replace('{size}', formatBytes(selection.totalBytes))
+      : translate('btn_send_files');
 
     visibleItems.forEach((item) => {
       const row = document.createElement('div');
@@ -671,16 +836,20 @@ document.addEventListener('DOMContentLoaded', () => {
       const info = document.createElement('div');
       info.className = 'queue-file-info';
 
+      const icon = document.createElement('span');
+      icon.className = 'queue-file-icon';
+      icon.setAttribute('aria-hidden', 'true');
+      icon.textContent = '◫';
+
       const name = document.createElement('div');
       name.className = 'queue-file-name truncate';
       name.textContent = item.file.name;
 
       const meta = document.createElement('div');
       meta.className = 'queue-file-meta';
-      meta.textContent = item.insight
-        ? `${formatBytes(item.file.size)} · ${item.insight.label}`
-        : formatBytes(item.file.size);
+      meta.textContent = `${formatBytes(item.file.size)} · ${translate(firstTransferFlow.getFileKindKey(item.file))}`;
 
+      info.appendChild(icon);
       info.appendChild(name);
       info.appendChild(meta);
 
@@ -695,7 +864,7 @@ document.addEventListener('DOMContentLoaded', () => {
       cancelButton.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" stroke-linecap="round"/></svg>';
       cancelButton.addEventListener('click', () => cancelQueueItem(item.id));
 
-      if (item.status === 'done' || item.status === 'cancelled' || item.status === 'error') {
+      if (item.status === 'done' || item.status === 'cancelled' || item.status === 'error' || item.confirmed) {
         cancelButton.classList.add('hidden');
       }
 
@@ -711,30 +880,37 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!selectedFiles.length) return;
 
     const largestFileSize = Math.max(...selectedFiles.map(file => file.size));
+    trackFlowAnalytics('files_selected', {
+      file_count: Math.min(selectedFiles.length, 10),
+      size_bucket: getFileSizeBucket(selectedFiles.reduce((total, file) => total + file.size, 0))
+    });
     trackAnalytics('file_queued', {
       file_count: Math.min(selectedFiles.length, 10),
       size_bucket: getFileSizeBucket(largestFileSize)
     });
 
-    selectedFiles.forEach((file) => {
-      transferQueue.push({
+    firstTransferFlow.addPendingFiles(transferQueue, selectedFiles, (file) => ({
         id: ++queueIdCounter,
         file,
         transferId: typeof crypto !== 'undefined' && crypto.randomUUID
           ? crypto.randomUUID()
           : `queue-${Date.now()}-${queueIdCounter}`,
         selectedAt: performance.now(),
-        status: 'pending',
         insight: localAiManager ? localAiManager.analyzeFile(file) : null
-      });
-    });
+      }));
 
     completedCard.classList.add('hidden');
     renderQueue();
-    processQueue();
+    updateConnectedStatus();
   }
 
   function cancelQueueItem(id) {
+    if (firstTransferFlow.removePendingFile(transferQueue, id)) {
+      renderQueue();
+      updateConnectedStatus();
+      return;
+    }
+
     const item = transferQueue.find(queueItem => queueItem.id === id);
     if (!item || item.status === 'done' || item.status === 'cancelled' || item.status === 'error') return;
 
@@ -750,6 +926,28 @@ document.addEventListener('DOMContentLoaded', () => {
     renderQueue();
   }
 
+  function clearPendingSelection() {
+    if (!firstTransferFlow.clearPendingFiles(transferQueue)) return false;
+    renderQueue();
+    updateConnectedStatus();
+    return true;
+  }
+
+  function confirmPendingSelection() {
+    const confirmedItems = firstTransferFlow.confirmPendingFiles(transferQueue, p2pConnected);
+    if (!confirmedItems.length) return false;
+
+    const totalBytes = confirmedItems.reduce((total, item) => total + item.file.size, 0);
+    trackFlowAnalytics('send_confirmed', {
+      file_count: Math.min(confirmedItems.length, 10),
+      size_bucket: getFileSizeBucket(totalBytes)
+    });
+    connectionStatusText.textContent = translate('status_sending');
+    renderQueue();
+    processQueue();
+    return true;
+  }
+
   async function processQueue() {
     if (isProcessingQueue || !p2pConnected) return;
 
@@ -757,7 +955,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     while (true) {
       if (!p2pConnected) break;
-      const nextItem = transferQueue.find(item => item.status === 'pending');
+      const nextItem = firstTransferFlow.findNextConfirmedFile(transferQueue);
       if (!nextItem) break;
 
       activeQueueItem = nextItem;
@@ -798,7 +996,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     isProcessingQueue = false;
     if (pwaUpdateDeferred) applyPendingPwaUpdate();
-    if (p2pConnected && transferQueue.some((item) => item.status === 'pending')) {
+    if (p2pConnected && firstTransferFlow.findNextConfirmedFile(transferQueue)) {
       queueMicrotask(processQueue);
     }
   }
@@ -912,6 +1110,7 @@ document.addEventListener('DOMContentLoaded', () => {
     sessionRecoveryState = markManualActionDelivered(sessionRecoveryState);
     roomCode = code;
     trackAnalytics('room_created');
+    trackFlowAnalytics('pairing_code_generated', { role: selectedTransferRole || 'receive' });
     updateOnboarding(2);
     
     // Display 4 digits
@@ -926,6 +1125,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Generate QR Code containing join URL
     const joinUrl = pairingPrivacy.buildPairingLink(window.location.origin, code);
+    currentPairingLink = joinUrl;
+    btnCopyLink.disabled = false;
     qrcodeDiv.innerHTML = '';
     if (typeof QRManager === 'undefined') {
       showToast(translate('qr_library_fail'));
@@ -945,12 +1146,16 @@ document.addEventListener('DOMContentLoaded', () => {
       sessionRecoveryState = markManualActionDelivered(sessionRecoveryState);
       webrtcManager.prepareForNewPairingSignals();
       connectionEstablishedTracked = false;
-      trackAnalytics('room_joined', { role });
+      trackFlowAnalytics('room_joined', {
+        role,
+        transfer_role: selectedTransferRole || 'unknown'
+      });
       updateOnboarding(2);
     }
 
     
     switchView('transfer');
+    receiverWaitingPanel.classList.toggle('hidden', selectedTransferRole !== 'receive');
     connectionStatusText.textContent = translate('conn_connecting');
     
     if (!recovered) {
@@ -1051,17 +1256,22 @@ document.addEventListener('DOMContentLoaded', () => {
         reconnectTimer = null;
       }
       connectionStatusText.textContent = translate('p2p_active');
+      renderQueue();
       if (!connectionEstablishedTracked) {
         connectionEstablishedTracked = true;
-        trackAnalytics('connection_established');
+        trackFlowAnalytics('connection_established', {
+          transfer_role: selectedTransferRole || 'unknown'
+        });
       }
       processQueue();
     } else if ((state === 'failed' || state === 'disconnected') && roomCode) {
       p2pConnected = false;
+      renderQueue();
       setPetState('error');
       scheduleReconnect();
     } else if (state === 'closed') {
       p2pConnected = false;
+      renderQueue();
       setPetState('error');
       if (roomCode) {
         scheduleReconnect();
@@ -1082,7 +1292,9 @@ document.addEventListener('DOMContentLoaded', () => {
     reconnectAttempts += 1;
     const delay = Math.min(1000 * (2 ** (reconnectAttempts - 1)), 10000);
     setPetState('connecting');
-    connectionStatusText.textContent = `Reconectando (${reconnectAttempts}/${maxReconnectAttempts})...`;
+    connectionStatusText.textContent = translate('reconnecting')
+      .replace('{attempt}', reconnectAttempts)
+      .replace('{total}', maxReconnectAttempts);
 
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null;
@@ -1107,7 +1319,7 @@ document.addEventListener('DOMContentLoaded', () => {
     sessionRecoveryState = state;
     p2pConnected = false;
     setPetState('connecting');
-    connectionStatusText.textContent = 'Reconectando...';
+    connectionStatusText.textContent = translate('try_again');
     completedCard.classList.add('hidden');
 
     const deliveryAlreadyConfirmed = webrtcManager.activeSendTransfer?.terminalState === 'completed';
@@ -1139,13 +1351,14 @@ document.addEventListener('DOMContentLoaded', () => {
     setNativeTransferKeepAlive(true);
     beginNetworkHealthSample(isSending, options);
     lastTrackedRoute = 'unknown';
-    trackAnalytics('transfer_started', {
+    trackFlowAnalytics('transfer_started', {
       direction: isSending ? 'send' : 'receive',
       size_bucket: getFileSizeBucket(totalBytes),
       mode: options.writeMode || 'unknown'
     });
     updateConnectionHealth({ connectionType: 'unknown', speed: 0 });
     setPetState('transferring');
+    connectionStatusText.textContent = translate('status_sending');
     updateOnboarding(4);
     dropZone.classList.add('hidden');
     completedCard.classList.add('hidden');
@@ -1201,7 +1414,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     const completedDirection = fileBlob || options.savedToDisk ? 'receive' : 'send';
     const completedRoute = networkHealthSample?.route || options.connectionType || 'unknown';
-    trackAnalytics('transfer_completed', {
+    trackFlowAnalytics('transfer_completed', {
       direction: completedDirection,
       route: completedRoute,
       size_bucket: getFileSizeBucket(currentFileTransferSize)
@@ -1209,6 +1422,7 @@ document.addEventListener('DOMContentLoaded', () => {
     recordNetworkHealth('completed');
     applyPendingPwaUpdate();
     setPetState('idle');
+    connectionStatusText.textContent = translate('status_transfer_completed');
     updateOnboarding(4, { complete: true });
     progressCard.classList.add('hidden');
     networkDiagnostics.classList.add('hidden');
@@ -1284,7 +1498,7 @@ document.addEventListener('DOMContentLoaded', () => {
     transferIsActive = false;
     releaseTransferWakeLock();
     setNativeTransferKeepAlive(false);
-    trackAnalytics('transfer_failed', {
+    trackFlowAnalytics('transfer_failed', {
       direction: networkHealthSample?.direction || 'unknown',
       route: networkHealthSample?.route || 'unknown',
       failure_type: ['write', 'network', 'protocol'].includes(details.type) ? details.type : 'other'
@@ -1292,6 +1506,7 @@ document.addEventListener('DOMContentLoaded', () => {
     recordNetworkHealth('failed');
     applyPendingPwaUpdate();
     setPetState('error');
+    connectionStatusText.textContent = translate('status_transfer_interrupted');
     progressCard.classList.add('hidden');
     networkDiagnostics.classList.add('hidden');
     completedCard.classList.add('hidden');
@@ -1304,13 +1519,14 @@ document.addEventListener('DOMContentLoaded', () => {
     transferIsActive = false;
     releaseTransferWakeLock();
     setNativeTransferKeepAlive(false);
-    trackAnalytics('transfer_cancelled', {
+    trackFlowAnalytics('transfer_cancelled', {
       direction: networkHealthSample?.direction || 'unknown',
       initiated_by: isLocal ? 'local' : 'remote'
     });
     recordNetworkHealth('cancelled');
     applyPendingPwaUpdate();
     setPetState('idle');
+    connectionStatusText.textContent = translate('status_transfer_interrupted');
     progressCard.classList.add('hidden');
     networkDiagnostics.classList.add('hidden');
     completedCard.classList.add('hidden');
@@ -1323,8 +1539,29 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // --- UI CONTROLS & LISTENERS ---
   btnGenerate.addEventListener('click', () => {
-    webrtcManager.markPairingStarted();
-    socketManager.generateCode();
+    requestPairingCode();
+  });
+
+  btnRoleSend.addEventListener('click', () => {
+    selectTransferRole('send');
+  });
+
+  btnRoleReceive.addEventListener('click', () => {
+    selectTransferRole('receive');
+  });
+
+  btnChangeRole.addEventListener('click', () => {
+    resetApp();
+  });
+
+  btnCopyLink.addEventListener('click', async () => {
+    if (!currentPairingLink) return;
+    try {
+      await navigator.clipboard.writeText(currentPairingLink);
+      showToast(translate('link_copied'));
+    } catch (err) {
+      showToast(translate('toast_copy_fail'));
+    }
   });
 
   if (btnToggleOnboarding) {
@@ -1338,6 +1575,7 @@ document.addEventListener('DOMContentLoaded', () => {
     submitManualJoin(code, {
       onInvalid: () => showToast(translate('invalid_code')),
       onValid: () => {
+        trackFlowAnalytics('pairing_code_submitted', { entry: 'manual' });
         webrtcManager.markPairingStarted();
         updateOnboarding(2);
         socketManager.joinCode(code);
@@ -1387,6 +1625,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
   btnAddToQueue.addEventListener('click', () => {
     fileInput.click();
+  });
+
+  btnClearQueue.addEventListener('click', () => {
+    clearPendingSelection();
+  });
+
+  btnConfirmSend.addEventListener('click', () => {
+    confirmPendingSelection();
   });
 
   clipboardTextInput.addEventListener('keydown', (e) => {
@@ -1451,6 +1697,7 @@ document.addEventListener('DOMContentLoaded', () => {
     socketManager.leaveRoom();
     webrtcManager.close();
     roomCode = null;
+    currentPairingLink = null;
     activeSocketGeneration = 0;
     recoveryCleanupStarted = false;
     connectionEstablishedTracked = false;
@@ -1479,9 +1726,10 @@ document.addEventListener('DOMContentLoaded', () => {
     d3.textContent = '-';
     d4.textContent = '-';
     codeDisplayWrapper.classList.add('hidden');
-    btnGenerate.classList.remove('hidden');
+    btnGenerate.classList.add('hidden');
     clipboardTextInput.value = '';
     clipboardFeed.innerHTML = '';
+    receiverWaitingPanel.classList.add('hidden');
 
     // History cleanup
     historyList.innerHTML = '';
@@ -1489,6 +1737,7 @@ document.addEventListener('DOMContentLoaded', () => {
     renderQueue();
 
     switchView('setup');
+    showRoleSelection();
   }
 
   // --- INITIATE CONNECTION ---
@@ -1503,6 +1752,11 @@ document.addEventListener('DOMContentLoaded', () => {
       entry: appOpenEntry
     });
     initializeOnboarding();
+    if (pendingAutoJoinCode) {
+      selectTransferRole('send');
+    } else {
+      showRoleSelection();
+    }
     socketManager.connect();
     restoreSharedFiles();
     registerServiceWorker();
@@ -1516,6 +1770,12 @@ document.addEventListener('DOMContentLoaded', () => {
   window.addEventListener('online', () => {
     showToast(translate('connection_recovered'));
     socketManager.ensureConnected();
+  });
+
+  window.addEventListener('airdows:language-change', () => {
+    renderQueue();
+    updateConnectedStatus();
+    updateOnboarding(onboardingStep, { complete: onboardingComplete });
   });
 
   window.addEventListener('pagehide', (event) => {
@@ -1536,6 +1796,7 @@ document.addEventListener('DOMContentLoaded', () => {
     pendingAutoJoinCode = null;
     if (!code) return;
 
+    trackFlowAnalytics('pairing_code_submitted', { entry: 'pairing_link' });
     webrtcManager.markPairingStarted();
     updateOnboarding(2);
     socketManager.joinCode(code);

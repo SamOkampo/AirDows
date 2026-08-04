@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title data-i18n="title">AirDows - P2P File Transfer</title>
+  <title data-i18n="title">AirDows - Secure File Transfer</title>
   <meta name="referrer" content="no-referrer">
   <script src="/js/pairing-link-privacy.js"></script>
   <link rel="icon" href="/favicon.ico" sizes="any">
@@ -65,7 +65,7 @@
         <img src="/assets/favicon.png" alt="" width="40" height="40">
         <h1>AirDows</h1>
       </div>
-      <p class="subtitle" data-i18n="subtitle">Direct Peer-to-Peer Secure File Transfer</p>
+      <p class="subtitle" data-i18n="subtitle">Send files securely between your devices</p>
     </header>
 
     <!-- Error Toast Notification -->
@@ -109,63 +109,78 @@
           </svg>
           <span data-i18n="privacy_assurance">Your files travel directly between your devices. AirDows does not store them.</span>
         </p>
-        <div class="pairing-grid">
-          
-          <!-- Column A: Receive (Generate Code) -->
-          <div class="pairing-col pairing-col-primary">
+        <div id="role-selection" class="role-selection">
+          <div class="role-selection-header">
+            <span class="badge badge-send" data-i18n="role_badge">First transfer</span>
+            <h2 data-i18n="role_title">What do you want to do on this device?</h2>
+            <p data-i18n="role_desc">Choose one option. You can go back before connecting.</p>
+          </div>
+          <div class="role-options">
+            <button id="btn-role-send" class="role-option" type="button">
+              <span class="role-option-icon" aria-hidden="true">↑</span>
+              <span><strong data-i18n="role_send">Send from this device</strong><small data-i18n="role_send_desc">Enter the code shown on the receiving device</small></span>
+            </button>
+            <button id="btn-role-receive" class="role-option" type="button">
+              <span class="role-option-icon" aria-hidden="true">↓</span>
+              <span><strong data-i18n="role_receive">Receive on this device</strong><small data-i18n="role_receive_desc">Create a temporary code and QR</small></span>
+            </button>
+          </div>
+        </div>
+
+        <div id="pairing-flow" class="pairing-flow hidden">
+          <button id="btn-change-role" class="btn-back" type="button">
+            <span aria-hidden="true">←</span>
+            <span data-i18n="btn_change_role">Change role</span>
+          </button>
+
+          <div id="receive-flow" class="pairing-col pairing-flow-panel hidden">
             <div class="col-header">
-              <span class="badge badge-receive" data-i18n="receive_badge">Recommended</span>
-              <h2 data-i18n="receive_title">Create a connection</h2>
-              <p data-i18n="receive_desc">Get a temporary code to open this connection on your other device.</p>
+              <span class="badge badge-receive" data-i18n="receive_badge">Receiving here</span>
+              <h2 data-i18n="receive_title">Receive on this device</h2>
+              <p data-i18n="receive_desc">Share this temporary code with the person sending the files.</p>
             </div>
-            
             <div id="code-generator-box" class="code-box">
-              <button id="btn-generate" class="btn btn-primary" type="button">
-                <span data-i18n="btn_generate">Create connection</span>
+              <button id="btn-generate" class="btn btn-primary hidden" type="button">
+                <span data-i18n="btn_generate">Generate another code</span>
               </button>
-              
-              <div id="code-display-wrapper" class="hidden">
-                <div class="digits-container">
+              <div id="code-display-wrapper" class="room-display hidden" aria-live="polite">
+                <p class="room-status" data-i18n="waiting_other_device">Waiting for the other device</p>
+                <div class="digits-container" aria-label="Temporary connection code" data-i18n-aria="temporary_code_aria">
                   <span class="digit-box" id="d1">-</span>
                   <span class="digit-box" id="d2">-</span>
                   <span class="digit-box" id="d3">-</span>
                   <span class="digit-box" id="d4">-</span>
                 </div>
-                
                 <div class="qr-container">
                   <div id="qrcode"></div>
-                  <p class="qr-hint" data-i18n="qr_hint">Scan with mobile to pair instantly</p>
+                  <p class="qr-hint" data-i18n="qr_hint">Scan this QR from the sending device</p>
                 </div>
+                <p class="room-instruction" data-i18n="receiver_open_sender">Open AirDows on the device you will send from.</p>
+                <button id="btn-copy-link" class="btn btn-secondary" type="button" disabled>
+                  <span data-i18n="btn_copy_link">Copy connection link</span>
+                </button>
+                <p class="keep-open-note" data-i18n="keep_devices_open">Keep AirDows open on both devices until the transfer finishes.</p>
               </div>
             </div>
           </div>
 
-          <!-- Divider -->
-          <div class="pairing-divider">
-            <span class="divider-line"></span>
-            <span class="divider-text" data-i18n="divider_or">OR</span>
-            <span class="divider-line"></span>
-          </div>
-
-          <!-- Column B: Send (Join Code) -->
-          <div class="pairing-col">
+          <div id="send-flow" class="pairing-col pairing-flow-panel hidden">
             <div class="col-header">
-              <span class="badge badge-send" data-i18n="send_badge">Already have a code?</span>
-              <h2 data-i18n="send_title">Enter your code</h2>
-              <p data-i18n="send_desc">Use the four digits shown on the other device to join its connection.</p>
+              <span class="badge badge-send" data-i18n="send_badge">Sending here</span>
+              <h2 data-i18n="send_title">Send from this device</h2>
+              <p data-i18n="send_desc">Enter the four-digit code shown on the receiving device.</p>
             </div>
-
             <div class="code-input-box">
               <div class="input-wrapper">
                 <label class="sr-only" for="join-code-input" data-i18n="join_label">4-digit connection code</label>
-                <input type="text" id="join-code-input" maxlength="4" inputmode="numeric" pattern="[0-9]{4}" placeholder="Enter 4-Digit Code" data-i18n-placeholder="join_placeholder" autocomplete="off" oninput="this.value = this.value.replace(/[^0-9]/g, '')">
+                <input type="text" id="join-code-input" maxlength="4" inputmode="numeric" pattern="[0-9]{4}" placeholder="Enter the 4-digit code" data-i18n-placeholder="join_placeholder" autocomplete="off" oninput="this.value = this.value.replace(/[^0-9]/g, '')">
               </div>
-              <button id="btn-join" class="btn btn-secondary" type="button">
-                <span data-i18n="btn_join">I have a code</span>
+              <button id="btn-join" class="btn btn-primary" type="button">
+                <span data-i18n="btn_join">Connect devices</span>
               </button>
+              <p class="keep-open-note" data-i18n="send_code_hint">The code appears on the device that will receive the files.</p>
             </div>
           </div>
-
         </div>
       </div>
 
@@ -187,10 +202,15 @@
           </button>
         </div>
 
+        <div id="receiver-waiting-panel" class="receiver-waiting-panel hidden" role="status" aria-live="polite">
+          <strong data-i18n="waiting_for_files">Waiting for files</strong>
+          <span data-i18n="keep_devices_open">Keep AirDows open on both devices until the transfer finishes.</span>
+        </div>
+
         <div class="transfer-body">
           <div class="transfer-tools">
             <!-- Drag and Drop Zone -->
-            <div id="drop-zone" class="drop-zone">
+            <div id="drop-zone" class="drop-zone sender-only">
               <input type="file" id="file-input" class="hidden" multiple>
               <div class="drop-zone-content">
                 <div class="drop-icon">
@@ -272,7 +292,7 @@
                 <span class="connection-health-dot" aria-hidden="true"></span>
                 <div>
                   <strong id="connection-health-title">Analizando conexión</strong>
-                  <span id="connection-health-hint">Midiendo la ruta P2P activa.</span>
+                  <span id="connection-health-hint">Comprobando la calidad de la conexión.</span>
                 </div>
               </div>
             </div>
@@ -281,12 +301,20 @@
           <div id="queue-container" class="queue-card hidden">
             <div class="queue-header">
               <div>
-                <h3 data-i18n="queue_title">Upload Queue</h3>
-                <p id="queue-summary">0 files waiting</p>
+                <h3 data-i18n="queue_title">Review files</h3>
+                <p id="queue-summary">0 files ready</p>
               </div>
               <button id="btn-add-to-queue" class="btn-add-queue" type="button" data-i18n="btn_add_to_queue">Add files</button>
             </div>
             <div id="queue-list" class="queue-list" aria-live="polite"></div>
+            <div class="queue-review-actions">
+              <button id="btn-clear-queue" class="btn btn-secondary" type="button" disabled>
+                <span data-i18n="btn_clear_selection">Clear selection</span>
+              </button>
+              <button id="btn-confirm-send" class="btn btn-primary" type="button" disabled>
+                <span id="send-button-label" data-i18n="btn_send_files">Send</span>
+              </button>
+            </div>
           </div>
 
           <!-- Completed/Download Dialog -->
@@ -333,20 +361,35 @@
   <script>
     const i18n = {
       en: {
-        title: "AirDows - P2P File Transfer",
+        title: "AirDows - Secure File Transfer",
         subtitle: "Send files between Android, iPhone, Windows and Mac",
-        receive_badge: "Recommended",
-        receive_title: "Create a connection",
-        receive_desc: "Get a temporary code to open this connection on your other device.",
-        btn_generate: "Create connection",
-        qr_hint: "Scan with mobile to pair instantly",
+        role_badge: "First transfer",
+        role_title: "What do you want to do on this device?",
+        role_desc: "Choose one option. You can go back before connecting.",
+        role_send: "Send from this device",
+        role_send_desc: "Enter the code shown on the receiving device",
+        role_receive: "Receive on this device",
+        role_receive_desc: "Create a temporary code and QR",
+        btn_change_role: "Change role",
+        receive_badge: "Receiving here",
+        receive_title: "Receive on this device",
+        receive_desc: "Share this temporary code with the person sending the files.",
+        btn_generate: "Generate another code",
+        waiting_other_device: "Waiting for the other device",
+        temporary_code_aria: "Temporary connection code",
+        qr_hint: "Scan this QR from the sending device",
+        receiver_open_sender: "Open AirDows on the device you will send from.",
+        btn_copy_link: "Copy connection link",
+        link_copied: "Connection link copied.",
+        keep_devices_open: "Keep AirDows open on both devices until the transfer finishes.",
         divider_or: "OR",
-        send_badge: "Already have a code?",
-        send_title: "Enter your code",
-        send_desc: "Use the four digits shown on the other device to join its connection.",
+        send_badge: "Sending here",
+        send_title: "Send from this device",
+        send_desc: "Enter the four-digit code shown on the receiving device.",
         join_label: "4-digit connection code",
-        join_placeholder: "Enter 4-Digit Code",
-        btn_join: "I have a code",
+        join_placeholder: "Enter the 4-digit code",
+        btn_join: "Connect devices",
+        send_code_hint: "The code appears on the device that will receive the files.",
         privacy_assurance: "Your files travel directly between your devices. AirDows does not store them.",
         onboarding_aria: "AirDows transfer guide",
         onboarding_title: "Send a file in 4 simple steps",
@@ -374,7 +417,7 @@
         install_app: "Install AirDows",
         update_deferred: "Update ready. It will be applied when the queue finishes.",
         install_success: "AirDows was installed successfully.",
-        connection_interrupted: "Connection interrupted. The transfer will resume after reconnecting.",
+        connection_interrupted: "Transfer interrupted. Trying again...",
         offline_resume: "You are offline. The transfer will resume when the network returns.",
         connection_recovered: "Connection restored.",
         invalid_encrypted_chunk: "The encrypted data could not be verified.",
@@ -384,7 +427,14 @@
         shared_files_ready: "{count} files ready",
         shared_files_connect_hint: "Connect another device to send",
         shared_files_status: "Waiting for connection",
-        conn_status: "Connected · Now select your files",
+        conn_status: "Waiting for the other device",
+        waiting_for_files: "Waiting for files",
+        devices_connected: "Devices connected",
+        files_ready_to_send: "Files ready to send",
+        status_sending: "Sending",
+        status_transfer_completed: "Transfer completed",
+        status_transfer_interrupted: "Transfer interrupted",
+        try_again: "Try again",
         btn_disconnect: "Disconnect",
         btn_disconnect_title: "Disconnect pairing",
         drop_zone_title: "Drag & Drop Files Here",
@@ -399,8 +449,8 @@
         transfer_completed: "Transfer Completed!",
         btn_download: "Download File",
         btn_transfer_another: "Transfer Another File",
-        queue_title: "Upload Queue",
-        queue_waiting: "files waiting",
+        queue_title: "Review files",
+        queue_waiting: "files ready",
         queue_sending: "Sending",
         queue_pending: "Pending",
         queue_done: "Done",
@@ -408,21 +458,30 @@
         queue_error: "Error",
         btn_cancel_transfer: "Cancel",
         btn_cancel_transfer_title: "Cancel current upload",
-        btn_cancel_queued: "Cancel queued file",
+        btn_cancel_queued: "Remove file",
         btn_add_to_queue: "Add files",
+        btn_clear_selection: "Clear selection",
+        btn_send_files: "Send",
+        btn_send_files_summary: "Send {count} file(s) · {size}",
+        file_kind_image: "Image",
+        file_kind_video: "Video",
+        file_kind_audio: "Audio",
+        file_kind_document: "Document",
+        file_kind_archive: "Archive",
+        file_kind_file: "File",
         transfer_cancelled: "Transfer cancelled.",
         remote_transfer_cancelled: "The other device cancelled the transfer.",
         diagnostic_connection: "Connection",
         diagnostic_quality: "Quality",
         diagnostic_speed: "Speed",
-        health_direct_title: "Direct route active",
-        health_direct_hint: "Your transfer is going peer to peer without an intermediary.",
-        health_relay_title: "Relay route active",
-        health_relay_hint: "Speed depends on the intermediary network route.",
+        health_direct_title: "Connection active",
+        health_direct_hint: "Your devices have a direct connection.",
+        health_relay_title: "Alternative connection active",
+        health_relay_hint: "Speed depends on the available network route.",
         health_slow_title: "Slow network detected",
         health_slow_hint: "Keep both devices connected while AirDows adapts the flow.",
         health_unknown_title: "Analyzing connection",
-        health_unknown_hint: "Measuring the active P2P route.",
+        health_unknown_hint: "Checking the connection quality.",
         performance_mode_disk: "Direct to disk",
         performance_mode_memory: "Compatibility mode: memory",
         performance_mode_send: "High-performance send",
@@ -431,13 +490,14 @@
         toast_error: "An error occurred",
         toast_copied: "Text copied to clipboard.",
         toast_copy_fail: "Could not copy text from this browser.",
-        socket_disconnect: "Disconnected from signaling server. Trying to reconnect...",
-        conn_connecting: "Connecting and establishing P2P channel...",
-        peer_disconnected: "Peer disconnected from this session.",
-        p2p_active: "Connected · Now select your files",
-        p2p_lost: "P2P Connection lost.",
-        sending: "Sending data...",
-        receiving: "Receiving data...",
+        socket_disconnect: "Connection interrupted. Trying again...",
+        conn_connecting: "Waiting for the other device",
+        peer_disconnected: "The other device disconnected.",
+        p2p_active: "Devices connected",
+        p2p_lost: "Transfer interrupted. Try again.",
+        reconnecting: "Trying again ({attempt}/{total})...",
+        sending: "Sending",
+        receiving: "Receiving",
         sent_success: "Sent Successfully",
         invalid_code: "Please enter a valid 4-digit code.",
         empty_clipboard: "Write text or paste a link before sending.",
@@ -449,20 +509,35 @@
         qr_library_fail: "QR code library failed to load. Enter the pairing code manually."
       },
       es: {
-        title: "AirDows - Transferencia de Archivos P2P",
+        title: "AirDows - Transferencia segura de archivos",
         subtitle: "Envía archivos entre Android, iPhone, Windows y Mac",
-        receive_badge: "Recomendado",
-        receive_title: "Crear una conexión",
-        receive_desc: "Obtén un código temporal para abrir esta conexión en tu otro dispositivo.",
-        btn_generate: "Crear conexión",
-        qr_hint: "Escanea con el móvil para emparejar al instante",
+        role_badge: "Primera transferencia",
+        role_title: "¿Qué quieres hacer en este dispositivo?",
+        role_desc: "Elige una opción. Puedes volver antes de conectarte.",
+        role_send: "Enviar desde este dispositivo",
+        role_send_desc: "Introduce el código que aparece en el dispositivo receptor",
+        role_receive: "Recibir en este dispositivo",
+        role_receive_desc: "Crea un código temporal y un QR",
+        btn_change_role: "Cambiar rol",
+        receive_badge: "Recibir aquí",
+        receive_title: "Recibir en este dispositivo",
+        receive_desc: "Comparte este código temporal con la persona que enviará los archivos.",
+        btn_generate: "Generar otro código",
+        waiting_other_device: "Esperando el otro dispositivo",
+        temporary_code_aria: "Código temporal de conexión",
+        qr_hint: "Escanea este QR desde el dispositivo que enviará",
+        receiver_open_sender: "Abre AirDows en el dispositivo desde el que vas a enviar.",
+        btn_copy_link: "Copiar enlace de conexión",
+        link_copied: "Enlace de conexión copiado.",
+        keep_devices_open: "Mantén AirDows abierto en ambos dispositivos hasta que termine la transferencia.",
         divider_or: "O",
-        send_badge: "¿Ya tienes un código?",
-        send_title: "Introduce tu código",
-        send_desc: "Usa los cuatro dígitos que aparecen en el otro dispositivo para unirte a su conexión.",
+        send_badge: "Enviar aquí",
+        send_title: "Enviar desde este dispositivo",
+        send_desc: "Introduce el código de cuatro dígitos que aparece en el dispositivo receptor.",
         join_label: "Código de conexión de 4 dígitos",
         join_placeholder: "Introduce el código de 4 dígitos",
-        btn_join: "Tengo un código",
+        btn_join: "Conectar dispositivos",
+        send_code_hint: "El código aparece en el dispositivo que recibirá los archivos.",
         privacy_assurance: "Tus archivos viajan directamente entre tus dispositivos. AirDows no los almacena.",
         onboarding_aria: "Guía de transferencia de AirDows",
         onboarding_title: "Envía un archivo en 4 pasos simples",
@@ -490,7 +565,7 @@
         install_app: "Instalar AirDows",
         update_deferred: "Actualización lista. Se aplicará cuando termine la cola.",
         install_success: "AirDows se instaló correctamente.",
-        connection_interrupted: "Conexión interrumpida. Se reanudará al reconectar.",
+        connection_interrupted: "Transferencia interrumpida. Intentando nuevamente...",
         offline_resume: "Sin conexión. La transferencia se reanudará cuando vuelva la red.",
         connection_recovered: "Conexión recuperada.",
         invalid_encrypted_chunk: "No se pudieron verificar los datos cifrados.",
@@ -500,7 +575,14 @@
         shared_files_ready: "{count} archivos listos",
         shared_files_connect_hint: "Conecta otro dispositivo para enviarlo",
         shared_files_status: "Esperando conexión",
-        conn_status: "Conectado · Ahora selecciona tus archivos",
+        conn_status: "Esperando el otro dispositivo",
+        waiting_for_files: "Esperando archivos",
+        devices_connected: "Dispositivos conectados",
+        files_ready_to_send: "Archivos listos para enviar",
+        status_sending: "Enviando",
+        status_transfer_completed: "Transferencia completada",
+        status_transfer_interrupted: "Transferencia interrumpida",
+        try_again: "Intenta nuevamente",
         btn_disconnect: "Desconectar",
         btn_disconnect_title: "Desconectar emparejamiento",
         drop_zone_title: "Arrastra y suelta archivos aquí",
@@ -515,8 +597,8 @@
         transfer_completed: "¡Transferencia completada!",
         btn_download: "Descargar archivo",
         btn_transfer_another: "Transferir otro archivo",
-        queue_title: "Cola de subida",
-        queue_waiting: "archivos en espera",
+        queue_title: "Revisa los archivos",
+        queue_waiting: "archivos listos",
         queue_sending: "Enviando",
         queue_pending: "En cola",
         queue_done: "Completado",
@@ -524,21 +606,30 @@
         queue_error: "Error",
         btn_cancel_transfer: "Cancelar",
         btn_cancel_transfer_title: "Cancelar subida actual",
-        btn_cancel_queued: "Cancelar archivo en cola",
+        btn_cancel_queued: "Eliminar archivo",
         btn_add_to_queue: "Agregar archivos",
+        btn_clear_selection: "Limpiar selección",
+        btn_send_files: "Enviar",
+        btn_send_files_summary: "Enviar {count} archivo(s) · {size}",
+        file_kind_image: "Imagen",
+        file_kind_video: "Video",
+        file_kind_audio: "Audio",
+        file_kind_document: "Documento",
+        file_kind_archive: "Archivo comprimido",
+        file_kind_file: "Archivo",
         transfer_cancelled: "Transferencia cancelada.",
         remote_transfer_cancelled: "El otro dispositivo canceló la transferencia.",
         diagnostic_connection: "Conexión",
         diagnostic_quality: "Calidad",
         diagnostic_speed: "Velocidad",
-        health_direct_title: "Ruta directa activa",
-        health_direct_hint: "La transferencia va de dispositivo a dispositivo sin intermediario.",
-        health_relay_title: "Ruta relay activa",
-        health_relay_hint: "La velocidad depende de la ruta de red intermedia.",
+        health_direct_title: "Conexión activa",
+        health_direct_hint: "Tus dispositivos tienen una conexión directa.",
+        health_relay_title: "Conexión alternativa activa",
+        health_relay_hint: "La velocidad depende de la ruta de red disponible.",
         health_slow_title: "Red lenta detectada",
         health_slow_hint: "Mantén ambos dispositivos conectados mientras AirDows adapta el flujo.",
         health_unknown_title: "Analizando conexión",
-        health_unknown_hint: "Midiendo la ruta P2P activa.",
+        health_unknown_hint: "Comprobando la calidad de la conexión.",
         performance_mode_disk: "Directo al disco",
         performance_mode_memory: "Modo compatibilidad: memoria",
         performance_mode_send: "Envío de alto rendimiento",
@@ -547,13 +638,14 @@
         toast_error: "Ocurrió un error",
         toast_copied: "Texto copiado al portapapeles.",
         toast_copy_fail: "No se pudo copiar el texto desde este navegador.",
-        socket_disconnect: "Desconectado del servidor de señalización. Intentando reconectar...",
-        conn_connecting: "Conectando y estableciendo canal P2P...",
-        peer_disconnected: "El par se ha desconectado de esta sesión.",
-        p2p_active: "Conectado · Ahora selecciona tus archivos",
-        p2p_lost: "Conexión P2P perdida.",
-        sending: "Enviando datos...",
-        receiving: "Recibiendo datos...",
+        socket_disconnect: "Conexión interrumpida. Intentando nuevamente...",
+        conn_connecting: "Esperando el otro dispositivo",
+        peer_disconnected: "El otro dispositivo se desconectó.",
+        p2p_active: "Dispositivos conectados",
+        p2p_lost: "Transferencia interrumpida. Intenta nuevamente.",
+        reconnecting: "Intentando nuevamente ({attempt}/{total})...",
+        sending: "Enviando",
+        receiving: "Recibiendo",
         sent_success: "Enviado con éxito",
         invalid_code: "Por favor, introduce un código válido de 4 dígitos.",
         empty_clipboard: "Escribe texto o pega un enlace antes de enviarlo.",
