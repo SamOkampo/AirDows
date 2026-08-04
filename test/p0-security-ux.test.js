@@ -10,7 +10,7 @@ function readProjectFile(relativePath) {
   return fs.readFileSync(path.join(projectRoot, relativePath), 'utf8');
 }
 
-test('every Umami tracker excludes URL hashes', () => {
+test('every Umami tracker excludes URL hashes and search parameters', () => {
   const htmlFiles = fs.readdirSync(publicDirectory).filter((file) => file.endsWith('.html'));
   let trackerCount = 0;
 
@@ -20,6 +20,7 @@ test('every Umami tracker excludes URL hashes', () => {
     trackerCount += trackers.length;
     for (const tracker of trackers) {
       assert.match(tracker, /data-exclude-hash=["']true["']/, `${file} must exclude hashes`);
+      assert.match(tracker, /data-exclude-search=["']true["']/, `${file} must exclude search parameters`);
     }
   }
 
