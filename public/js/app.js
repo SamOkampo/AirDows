@@ -298,8 +298,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const errorKeys = {
       INVALID_ENCRYPTED_CHUNK: 'invalid_encrypted_chunk',
       UNEXPECTED_TRANSFER_SIZE: 'unexpected_transfer_size',
-      RECEIVER_NOT_READY: 'receiver_not_ready',
-      RELAY_LIMIT_REACHED: 'relay_limit_required'
+      RECEIVER_NOT_READY: 'receiver_not_ready'
     };
     return errorKeys[error?.code] ? translate(errorKeys[error.code]) : (error?.message || translate('toast_error'));
   }
@@ -405,10 +404,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function updateTransferModeBadge(options = {}) {
     const modeKey = options.writeMode === 'disk'
-      ? 'pro_mode_disk'
+      ? 'performance_mode_disk'
       : options.writeMode === 'memory'
-        ? 'pro_mode_memory'
-        : 'pro_mode_send';
+        ? 'performance_mode_memory'
+        : 'performance_mode_send';
 
     const baseLabel = translate(modeKey);
     diagnosticMode.textContent = options.performanceProfile
@@ -782,9 +781,6 @@ document.addEventListener('DOMContentLoaded', () => {
           if (!p2pConnected) break;
         } else if (err.name === 'TransferCancelledError' || nextItem.status === 'cancelled') {
           nextItem.status = 'cancelled';
-        } else if (err.name === 'ProRequiredError') {
-          nextItem.status = 'error';
-          showToast(translate('relay_limit_pro'));
         } else if (/connection (is not ready|closed)|data connection/i.test(err.message)) {
           nextItem.status = 'pending';
           p2pConnected = false;
@@ -1035,15 +1031,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
   socketManager.onError = (message) => {
     showToast(message);
-  };
-
-  socketManager.onRelayBudget = (budget) => {
-    webrtcManager.setRelayBudget(budget);
-  };
-
-  socketManager.onProRequired = () => {
-    webrtcManager.handleProRequired();
-    showToast(translate('relay_limit_required'));
   };
 
   // --- WEBRTC EVENT HANDLERS ---
@@ -1300,7 +1287,7 @@ document.addEventListener('DOMContentLoaded', () => {
     trackAnalytics('transfer_failed', {
       direction: networkHealthSample?.direction || 'unknown',
       route: networkHealthSample?.route || 'unknown',
-      failure_type: ['write', 'relay-budget', 'network', 'protocol'].includes(details.type) ? details.type : 'other'
+      failure_type: ['write', 'network', 'protocol'].includes(details.type) ? details.type : 'other'
     });
     recordNetworkHealth('failed');
     applyPendingPwaUpdate();

@@ -63,11 +63,6 @@ const CODE_GENERATION_RATE_LIMIT_MAX = 10;
 const JOIN_RATE_LIMIT_MAX = 30;
 const SOCKET_CONNECTION_RATE_LIMIT_MAX = 60;
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;
-const FREE_RELAY_BUDGET_BYTES = Math.max(
-  0,
-  Number.parseInt(process.env.FREE_RELAY_BUDGET_BYTES || String(250 * 1024 * 1024), 10) || 0
-);
-const MAX_RELAY_USAGE_REPORT_BYTES = 8 * 1024 * 1024;
 const ADMIN_DASHBOARD_TOKEN = process.env.ADMIN_DASHBOARD_TOKEN || '';
 const METRICS_DATABASE_URL = process.env.METRICS_DATABASE_URL || process.env.DATABASE_URL || '';
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
@@ -75,13 +70,11 @@ const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const ALERT_MIN_SAMPLES = readEnvNumber('ALERT_MIN_SAMPLES', 20, 1, 10_000);
 const ALERT_FAILURE_PERCENT = readEnvNumber('ALERT_FAILURE_PERCENT', 10, 1, 100);
 const ALERT_RELAY_PERCENT = readEnvNumber('ALERT_RELAY_PERCENT', 35, 1, 100);
-const ALERT_PRO_REQUIRED_COUNT = readEnvNumber('ALERT_PRO_REQUIRED_COUNT', 5, 1, 10_000);
 const ALERT_COOLDOWN_MS = readEnvNumber('ALERT_COOLDOWN_MS', 60 * 60 * 1000, 60_000, 24 * 60 * 60 * 1000);
 
 let cachedIceConfig = null;
 let cachedIceConfigExpiresAt = 0;
 const alertState = new Map();
-let lastProRequiredAlertCount = 0;
 
 const apiLimiter = rateLimit({
   windowMs: 60 * 1000,
@@ -282,7 +275,6 @@ const networkHealthStats = {
   byDuration: Object.create(null),
   relayChunks: 0,
   relayEstimatedBytes: 0,
-  proRequiredEvents: 0,
   startedAt: new Date().toISOString()
 };
 
@@ -350,40 +342,6 @@ function recordNetworkHealth(payload) {
   }
 }
 
-function getRelayBudget(socket) {
-  if (!socket.data.relayBudget) {
-    socket.data.relayBudget = {
-      limitBytes: FREE_RELAY_BUDGET_BYTES,
-      usedBytes: 0,
-      blocked: false
-    };
-  }
-  return socket.data.relayBudget;
-}
-
-function emitProRequired(socket) {
-  const budget = getRelayBudget(socket);
-  if (budget.blocked) return;
-
-  budget.blocked = true;
-  networkHealthStats.proRequiredEvents += 1;
-  metricsStore.record({ proRequiredEvents: 1 });
-  if (networkHealthStats.proRequiredEvents - lastProRequiredAlertCount >= ALERT_PRO_REQUIRED_COUNT) {
-    lastProRequiredAlertCount = networkHealthStats.proRequiredEvents;
-    sendTelegramAlert(
-      'relay-budget',
-      'Límites Free alcanzados',
-      `${networkHealthStats.proRequiredEvents} sesiones alcanzaron el límite relay en esta ejecución.`
-    ).catch(() => {});
-  }
-  socket.emit('pro-required', {
-    code: 'PRO_REQUIRED',
-    plan: 'free',
-    limitBytes: budget.limitBytes,
-    usedBytes: budget.usedBytes
-  });
-}
-
 function getSessionMetricTotals() {
   return {
     samples: networkHealthStats.samples,
@@ -396,7 +354,6 @@ function getSessionMetricTotals() {
     unknownRoute: networkHealthStats.byRoute.unknown || 0,
     relayChunks: networkHealthStats.relayChunks,
     relayEstimatedBytes: networkHealthStats.relayEstimatedBytes,
-    proRequiredEvents: networkHealthStats.proRequiredEvents,
     startedAt: networkHealthStats.startedAt
   };
 }
@@ -458,9 +415,7 @@ function formatDashboardMetrics(totals, persistenceEnabled) {
     },
     relay: {
       chunks: totals.relayChunks,
-      estimatedGiB: Number((totals.relayEstimatedBytes / (1024 ** 3)).toFixed(3)),
-      freeBudgetMiB: Number((FREE_RELAY_BUDGET_BYTES / (1024 ** 2)).toFixed(0)),
-      proRequiredEvents: totals.proRequiredEvents
+      estimatedGiB: Number((totals.relayEstimatedBytes / (1024 ** 3)).toFixed(3))
     }
   };
 }
@@ -564,13 +519,6 @@ io.use((socket, next) => {
 io.on('connection', (socket) => {
   console.info(`[Connection] New socket session established`);
   
-  const relayBudget = getRelayBudget(socket);
-  socket.emit('relay-budget', {
-    plan: 'free',
-    limitBytes: relayBudget.limitBytes,
-    usedBytes: relayBudget.usedBytes
-  });
-
   socket.on('get-ice-config', async () => {
     try {
       socket.emit('ice-config', await getIceConfig());
@@ -595,22 +543,6 @@ io.on('connection', (socket) => {
     events.count += 1;
     socket.data.networkHealthEvents = events;
     recordNetworkHealth(payload);
-  });
-
-  socket.on('relay-usage', (payload = {}) => {
-    const bytes = Number.isSafeInteger(payload.bytes) && payload.bytes > 0
-      ? Math.min(payload.bytes, MAX_RELAY_USAGE_REPORT_BYTES)
-      : 0;
-    if (!bytes) return;
-
-    const budget = getRelayBudget(socket);
-    if (budget.blocked) return;
-    budget.usedBytes += bytes;
-    if (budget.usedBytes > budget.limitBytes) emitProRequired(socket);
-  });
-
-  socket.on('relay-budget-exhausted', () => {
-    emitProRequired(socket);
   });
 
   // 1. Generate a new pairing code

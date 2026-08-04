@@ -19,7 +19,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
   <script src="/js/language-preference.js"></script>
-  <script defer src="https://cloud.umami.is/script.js" data-website-id="09412ec8-2ab9-41f4-a833-21fdcf60bf41"></script>
+  <script defer src="https://cloud.umami.is/script.js" data-website-id="09412ec8-2ab9-41f4-a833-21fdcf60bf41" data-exclude-hash="true" data-exclude-search="true"></script>
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
@@ -264,9 +264,9 @@
             </div>
             <div class="progress-percentage" id="progress-percent">0%</div>
             <div id="network-diagnostics" class="network-diagnostics hidden">
-              <div class="diagnostic-chip pro-mode">
+              <div class="diagnostic-chip performance-mode">
                 <span class="diagnostic-dot"></span>
-                <span id="diagnostic-mode">Modo Pro</span>
+                <span id="diagnostic-mode">Rendimiento</span>
               </div>
               <div id="connection-health" class="connection-health tone-neutral" role="status">
                 <span class="connection-health-dot" aria-hidden="true"></span>
@@ -374,8 +374,6 @@
         install_app: "Install AirDows",
         update_deferred: "Update ready. It will be applied when the queue finishes.",
         install_success: "AirDows was installed successfully.",
-        relay_limit_pro: "Free relay limit reached. AirDows Pro allows larger remote transfers.",
-        relay_limit_required: "Free relay limit reached. AirDows Pro is required to continue on this route.",
         connection_interrupted: "Connection interrupted. The transfer will resume after reconnecting.",
         offline_resume: "You are offline. The transfer will resume when the network returns.",
         connection_recovered: "Connection restored.",
@@ -425,9 +423,9 @@
         health_slow_hint: "Keep both devices connected while AirDows adapts the flow.",
         health_unknown_title: "Analyzing connection",
         health_unknown_hint: "Measuring the active P2P route.",
-        pro_mode_disk: "Pro Mode: direct to disk",
-        pro_mode_memory: "Compatibility mode: memory",
-        pro_mode_send: "High-performance send",
+        performance_mode_disk: "Direct to disk",
+        performance_mode_memory: "Compatibility mode: memory",
+        performance_mode_send: "High-performance send",
         saved_to_disk: "Saved directly to disk",
         // Dynamic strings for JS
         toast_error: "An error occurred",
@@ -492,8 +490,6 @@
         install_app: "Instalar AirDows",
         update_deferred: "Actualización lista. Se aplicará cuando termine la cola.",
         install_success: "AirDows se instaló correctamente.",
-        relay_limit_pro: "Límite gratuito de relay alcanzado. AirDows Pro permite continuar transferencias remotas grandes.",
-        relay_limit_required: "Límite gratuito de relay alcanzado. Necesitas AirDows Pro para continuar por esta ruta.",
         connection_interrupted: "Conexión interrumpida. Se reanudará al reconectar.",
         offline_resume: "Sin conexión. La transferencia se reanudará cuando vuelva la red.",
         connection_recovered: "Conexión recuperada.",
@@ -543,9 +539,9 @@
         health_slow_hint: "Mantén ambos dispositivos conectados mientras AirDows adapta el flujo.",
         health_unknown_title: "Analizando conexión",
         health_unknown_hint: "Midiendo la ruta P2P activa.",
-        pro_mode_disk: "Modo Pro: directo al disco",
-        pro_mode_memory: "Modo compatibilidad: memoria",
-        pro_mode_send: "Envío de alto rendimiento",
+        performance_mode_disk: "Directo al disco",
+        performance_mode_memory: "Modo compatibilidad: memoria",
+        performance_mode_send: "Envío de alto rendimiento",
         saved_to_disk: "Guardado directo al disco",
         // Dynamic strings for JS
         toast_error: "Ocurrió un error",
