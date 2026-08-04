@@ -1604,7 +1604,10 @@ test('stalled delivery retry runs terminal failure cleanup exactly once', async 
   const transfer = manager.activeSendTransfer;
   const waiter = manager.deliveryWaiters.get(transferId);
   assert.ok(waiter);
-  await assert.rejects(sending, { code: 'RTC_TRANSFER_STALLED' });
+  await assert.rejects(
+    waitWithReferencedTimeout(sending, 250, 'Timed out waiting for the stalled delivery retry to fail.'),
+    { code: 'RTC_TRANSFER_STALLED' }
+  );
 
   assert.equal(failureCallbacks, 1);
   assert.equal(wakeLockHeld, false);
