@@ -1537,6 +1537,102 @@ body {
   font-size: 0.9rem;
 }
 
+.received-files-card {
+  background: rgba(8, 17, 20, 0.74);
+  border: 1px solid rgba(56, 189, 248, 0.22);
+  border-radius: 18px;
+  margin-top: 18px;
+  padding: 22px;
+}
+
+.received-files-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.received-files-header h3 {
+  font-size: 1.05rem;
+  font-weight: 750;
+}
+
+.received-files-header p {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  margin-top: 4px;
+}
+
+.received-files-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.received-file-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border-light);
+  border-radius: 14px;
+  padding: 13px 14px;
+}
+
+.received-file-item.is-downloaded {
+  border-left: 3px solid var(--color-success);
+}
+
+.received-file-info {
+  min-width: 0;
+}
+
+.received-file-name {
+  color: var(--text-primary);
+  display: block;
+  font-size: 0.9rem;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.received-file-meta {
+  color: var(--text-secondary);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 0.76rem;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.received-file-status {
+  color: #7dd3fc;
+  font-weight: 750;
+}
+
+.received-file-item.is-downloaded .received-file-status {
+  color: #6ee7b7;
+}
+
+.received-file-download {
+  min-height: 42px;
+  min-width: 116px;
+  padding: 9px 14px;
+}
+
+.received-file-download[aria-disabled="true"] {
+  opacity: 0.65;
+  pointer-events: none;
+}
+
+.received-files-card > .btn {
+  width: 100%;
+}
+
 /* Toast Notifications */
 .toast {
   position: fixed;
@@ -1763,6 +1859,18 @@ body {
 
   .action-buttons {
     flex-direction: column;
+  }
+
+  .received-files-card {
+    padding: 17px;
+  }
+
+  .received-file-item {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .received-file-download {
+    width: 100%;
   }
 
   .diagnostic-grid {

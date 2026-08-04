@@ -216,6 +216,19 @@ test('analytics properties exclude pairing and content identifiers', () => {
 
   assert.deepEqual(properties, { role: 'receiver' });
   assert.equal(JSON.stringify(properties).includes('1234'), false);
+
+  const downloadProperties = sanitizeAnalyticsProperties('receiver_download_clicked', {
+    flow_version: 'first-transfer-v2',
+    file_count_bucket: 'multiple',
+    fileName: 'private.pdf',
+    size: 987654,
+    mime: 'application/pdf',
+    blobUrl: 'blob:private'
+  });
+  assert.deepEqual(downloadProperties, {
+    flow_version: 'first-transfer-v2',
+    file_count_bucket: 'multiple'
+  });
 });
 
 test('every current analytics event preserves its safe properties', () => {
@@ -253,6 +266,9 @@ test('every current analytics event preserves its safe properties', () => {
     },
     transfer_cancelled: {
       direction: 'receive', initiated_by: 'remote', flow_version: 'first-transfer-v2'
+    },
+    receiver_download_clicked: {
+      flow_version: 'first-transfer-v2', file_count_bucket: 'multiple'
     }
   };
 

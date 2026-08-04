@@ -34,6 +34,7 @@
     transfer_completed: ['direction', 'route', 'size_bucket', 'flow_version'],
     transfer_failed: ['direction', 'route', 'failure_type', 'flow_version'],
     transfer_cancelled: ['direction', 'initiated_by', 'flow_version'],
+    receiver_download_clicked: ['flow_version', 'file_count_bucket'],
     route_selected: ['route']
   });
 
