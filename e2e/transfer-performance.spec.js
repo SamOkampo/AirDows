@@ -377,7 +377,7 @@ async function savePerformanceReport(testInfo, index, sender, receiver, clocks) 
   });
 }
 
-async function submitFiles(page, files) {
+async function selectFilesForReview(page, files) {
   await page.locator('#file-input').setInputFiles(files);
 }
 
@@ -449,16 +449,49 @@ test('pairs two devices and establishes a real transfer performance baseline', a
       waitForDiagnostics(devices.receiver.page)
     ]);
 
-    await devices.sender.page.locator('#btn-generate').click();
-    const pairingCode = await waitForPairingCode(devices.sender.page);
-    await devices.receiver.page.locator('#join-code-input').fill(pairingCode);
-    await devices.receiver.page.locator('#btn-join').click();
+    await expect(devices.sender.page.locator('#role-selection')).toBeVisible();
+    await expect(devices.receiver.page.locator('#role-selection')).toBeVisible();
+
+    await devices.receiver.page.locator('#btn-role-receive').click();
+    await expect(devices.receiver.page.locator('#receive-flow')).toBeVisible();
+    const pairingCode = await waitForPairingCode(devices.receiver.page);
+    await expect(devices.receiver.page.locator('#code-display-wrapper')).toBeVisible();
+    await expect(devices.receiver.page.locator('#qrcode canvas')).toHaveCount(1);
+    await expect(devices.receiver.page.locator('#btn-copy-link')).toBeEnabled();
+
+    await devices.sender.page.locator('#btn-role-send').click();
+    await expect(devices.sender.page.locator('#send-flow')).toBeVisible();
+    await expect(devices.sender.page.locator('#btn-change-role')).toBeVisible();
+    await devices.sender.page.locator('#join-code-input').fill(pairingCode);
+    await devices.sender.page.locator('#btn-join').click();
     await Promise.all([
       removePairingSecretsFromPage(devices.sender.page),
       removePairingSecretsFromPage(devices.receiver.page)
     ]);
 
     await waitForOpenDataChannels(devices.sender.page, devices.receiver.page);
+    await expect(devices.sender.page.locator('#btn-confirm-send')).toBeDisabled();
+
+    const clipboardMessage = 'AirDows clipboard remains available during file review';
+    await devices.sender.page.locator('#clipboard-text-input').fill(clipboardMessage);
+    await devices.sender.page.locator('#btn-send-text').click();
+    await expect(devices.receiver.page.locator('#clipboard-feed .clipboard-message-text'))
+      .toContainText(clipboardMessage);
+
+    const reviewOnlyFiles = [
+      createTestFile(TEST_FILE_NAMES[0], 0, 3),
+      createTestFile(TEST_FILE_NAMES[2], 32, 5)
+    ];
+    await selectFilesForReview(devices.sender.page, reviewOnlyFiles);
+    await expect(devices.sender.page.locator('#queue-list .queue-item.pending')).toHaveCount(2);
+    await devices.sender.page.locator('#queue-list .queue-cancel-btn').first().click();
+    await expect(devices.sender.page.locator('#queue-list .queue-item.pending')).toHaveCount(1);
+    await expect(devices.sender.page.locator('#queue-list .queue-file-name'))
+      .toHaveText(reviewOnlyFiles[1].name);
+    await devices.sender.page.locator('#btn-clear-queue').click();
+    await expect(devices.sender.page.locator('#queue-list .queue-item.pending')).toHaveCount(0);
+    await expect(devices.sender.page.locator('#btn-confirm-send')).toBeDisabled();
+
     const clocks = {
       sender: await calibratePageClock(devices.sender.page),
       receiver: await calibratePageClock(devices.receiver.page)
@@ -490,7 +523,25 @@ test('pairs two devices and establishes a real transfer performance baseline', a
       const receiverInitial = (await readCompletedTransfers(devices.receiver.page)).length;
       const receiverDownloadsInitial = devices.receiver.downloadCount;
 
-      await submitFiles(devices.sender.page, files);
+      await selectFilesForReview(devices.sender.page, files);
+
+      const pendingRows = devices.sender.page.locator('#queue-list .queue-item.pending');
+      await expect(pendingRows).toHaveCount(files.length);
+      await expect(devices.sender.page.locator('#btn-confirm-send')).toBeEnabled();
+      await expect(devices.sender.page.locator('#progress-card')).toBeHidden();
+      await devices.sender.page.waitForTimeout(250);
+      expect((await readCompletedTransfers(devices.sender.page)).length).toBe(senderInitial);
+      expect((await readCompletedTransfers(devices.receiver.page)).length).toBe(receiverInitial);
+
+      if (files.length === 2) {
+        await expect(pendingRows.nth(0).locator('.queue-file-name')).toHaveText(files[0].name);
+        await expect(pendingRows.nth(1).locator('.queue-file-name')).toHaveText(files[1].name);
+      }
+
+      await devices.sender.page.locator('#btn-confirm-send').evaluate((button) => {
+        button.click();
+        button.click();
+      });
 
       const [senderTransfers, receiverTransfers] = await Promise.all([
         waitForNewTransfers(devices.sender.page, senderInitial, files.length, 'sender'),

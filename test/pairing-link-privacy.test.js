@@ -228,13 +228,32 @@ test('every current analytics event preserves its safe properties', () => {
     pwa_installed: {},
     file_queued: { file_count: 2, size_bucket: '10mb_100mb' },
     room_created: {},
-    room_joined: { role: 'receiver' },
-    connection_established: {},
-    transfer_started: { direction: 'send', size_bucket: 'under_10mb', mode: 'send' },
+    transfer_role_selected: { role: 'send', flow_version: 'first-transfer-v2' },
+    pairing_code_generated: { role: 'receive', flow_version: 'first-transfer-v2' },
+    pairing_code_submitted: { entry: 'manual', flow_version: 'first-transfer-v2' },
+    room_joined: {
+      role: 'receiver', transfer_role: 'send', flow_version: 'first-transfer-v2'
+    },
+    connection_established: { transfer_role: 'send', flow_version: 'first-transfer-v2' },
+    files_selected: {
+      file_count: 2, size_bucket: '10mb_100mb', flow_version: 'first-transfer-v2'
+    },
+    send_confirmed: {
+      file_count: 2, size_bucket: '10mb_100mb', flow_version: 'first-transfer-v2'
+    },
+    transfer_started: {
+      direction: 'send', size_bucket: 'under_10mb', mode: 'send', flow_version: 'first-transfer-v2'
+    },
     route_selected: { route: 'relay' },
-    transfer_completed: { direction: 'receive', route: 'host', size_bucket: '100mb_1gb' },
-    transfer_failed: { direction: 'send', route: 'unknown', failure_type: 'network' },
-    transfer_cancelled: { direction: 'receive', initiated_by: 'remote' }
+    transfer_completed: {
+      direction: 'receive', route: 'host', size_bucket: '100mb_1gb', flow_version: 'first-transfer-v2'
+    },
+    transfer_failed: {
+      direction: 'send', route: 'unknown', failure_type: 'network', flow_version: 'first-transfer-v2'
+    },
+    transfer_cancelled: {
+      direction: 'receive', initiated_by: 'remote', flow_version: 'first-transfer-v2'
+    }
   };
 
   for (const [eventName, properties] of Object.entries(matrix)) {
