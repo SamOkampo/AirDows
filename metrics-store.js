@@ -32,7 +32,7 @@ class MetricsStore {
 
     try {
       await this.pool.query(`
-        CREATE TABLE IF NOT EXISTS airdows_daily_metrics (
+        CREATE TABLE IF NOT EXISTS public.airdows_daily_metrics (
           metric_date DATE PRIMARY KEY,
           samples BIGINT NOT NULL DEFAULT 0,
           completed BIGINT NOT NULL DEFAULT 0,
@@ -48,6 +48,15 @@ class MetricsStore {
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
       `);
+      await this.pool.query(
+        'ALTER TABLE public.airdows_daily_metrics ENABLE ROW LEVEL SECURITY'
+      );
+      await this.pool.query(
+        'REVOKE ALL ON TABLE public.airdows_daily_metrics FROM anon'
+      );
+      await this.pool.query(
+        'REVOKE ALL ON TABLE public.airdows_daily_metrics FROM authenticated'
+      );
       console.info('[AirDows] Persistent metrics connected.');
       return true;
     } catch (error) {
