@@ -2,6 +2,14 @@
   const STORAGE_KEY = 'airdows-language-v1';
   const supportedLanguages = new Set(['en', 'es']);
 
+  // 100% privacy-first analytics
+  if (!document.querySelector('script[src="https://scripts.simpleanalyticscdn.com/latest.js"]')) {
+    const simpleAnalyticsScript = document.createElement('script');
+    simpleAnalyticsScript.async = true;
+    simpleAnalyticsScript.src = 'https://scripts.simpleanalyticscdn.com/latest.js';
+    document.head.appendChild(simpleAnalyticsScript);
+  }
+
   function normalizeLanguage(value) {
     const language = String(value || '').toLowerCase().split('-')[0];
     return supportedLanguages.has(language) ? language : null;
