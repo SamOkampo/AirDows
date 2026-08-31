@@ -1,0 +1,23 @@
+{
+  "name": "AirDows staging",
+  "description": "Parallel validation app. Do not attach the production domain until smoke tests and rollback are approved.",
+  "repository": "https://github.com/SamOkampo/AirDows",
+  "buildpacks": [
+    { "url": "heroku/nodejs" }
+  ],
+  "env": {
+    "NODE_ENV": { "value": "production" },
+    "ALLOWED_ORIGINS": { "description": "Exact staging origin", "required": true },
+    "ADMIN_DASHBOARD_TOKEN": { "description": "Random staging-only token", "required": true },
+    "TURN_URLS": { "description": "TURN URLs used by the current compatible provider", "required": false },
+    "TURN_USERNAME": { "description": "TURN username", "required": false },
+    "TURN_CREDENTIAL": { "description": "TURN credential", "required": false },
+    "METRICS_DATABASE_URL": { "description": "Staging PostgreSQL URL; never reuse production without approval", "required": false },
+    "METRICS_DATABASE_SSL": { "value": "true" },
+    "TELEGRAM_BOT_TOKEN": { "description": "Optional staging alert bot token", "required": false },
+    "TELEGRAM_CHAT_ID": { "description": "Optional staging alert destination", "required": false }
+  },
+  "formation": {
+    "web": { "quantity": 1 }
+  }
+}

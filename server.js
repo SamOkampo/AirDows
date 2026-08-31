@@ -760,6 +760,13 @@ function leaveAllRooms(socket) {
 // Aplicar el limitador de peticiones primero
 app.use(apiLimiter);
 
+// Public, dependency-free readiness probe for parallel staging and uptime checks.
+// It intentionally exposes no configuration, credentials, metrics, or user data.
+app.get('/healthz', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.status(200).json({ status: 'ok', service: 'airdows' });
+});
+
 app.get('/admin/dashboard', requireAdminDashboard, (req, res) => {
   res.set('Cache-Control', 'private, no-store');
   res.sendFile(path.join(__dirname, 'private', 'admin-dashboard.html'));
