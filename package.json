@@ -16,7 +16,7 @@
     "native:run": "npx cap run android"
   },
   "dependencies": {
-    "@capacitor/android": "^8.4.2",
+    "@capacitor/android": "^8.5.0",
     "@capacitor/core": "^8.4.2",
     "express": "^4.19.2",
     "express-rate-limit": "^8.6.1",
