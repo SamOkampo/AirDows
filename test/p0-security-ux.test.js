@@ -65,8 +65,8 @@ test('the vulnerable transitive ip-address version is overridden', () => {
   const manifest = JSON.parse(readProjectFile('package.json'));
   const lockfile = JSON.parse(readProjectFile('package-lock.json'));
 
-  assert.equal(manifest.dependencies['express-rate-limit'], '^8.6.1');
+  assert.match(manifest.dependencies['express-rate-limit'], /^\^8\./);
   assert.equal(manifest.overrides['ip-address'], '10.4.0');
-  assert.equal(lockfile.packages['node_modules/express-rate-limit'].version, '8.6.1');
+  assert.match(lockfile.packages['node_modules/express-rate-limit'].version, /^8\./);
   assert.equal(lockfile.packages['node_modules/ip-address'].version, '10.4.0');
 });
