@@ -2,9 +2,16 @@ name: AirDows transfer baseline
 
 on:
   pull_request:
+  push:
+    branches: [main]
 
 permissions:
   contents: read
+  id-token: write
+
+concurrency:
+  group: airdows-ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   transfer-baseline:
@@ -27,13 +34,29 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Run unit tests
-        run: npm test
+      - name: Run unit tests with coverage
+        run: npm run test:coverage
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: airdows-coverage-${{ github.run_id }}
+          path: coverage/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish coverage to Codecov when connected
+        uses: codecov/codecov-action@a99c28d3f0da835de33ff2feb2e15691c7b9641f # v7
+        with:
+          files: ./coverage/lcov.info
+          use_oidc: true
+          fail_ci_if_error: false
 
       - name: Check JavaScript syntax
         run: npm run test:syntax
 
       - name: Check patch whitespace
+        if: github.event_name == 'pull_request'
         run: git diff --check "${{ github.event.pull_request.base.sha }}...HEAD"
 
       - name: Install Chromium
