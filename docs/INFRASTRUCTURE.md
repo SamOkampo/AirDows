@@ -23,7 +23,9 @@ After creating the isolated app, run `AIRDOWS_STAGING_URL=https://... npm run te
 
 ## Secret ownership
 
-Use separate Doppler configurations named `dev`, `stg`, and `prd`. The CLI may be installed locally, but no account or project should be linked until the destination and access policy are confirmed. Net-new staging values must not copy production credentials unless compatibility requires it and the copy is explicitly approved.
+The Doppler project `airdows` has separate `dev`, `stg`, `prd`, and personal development configurations. The application-owned Railway variables are mirrored in `airdows/prd` as an encrypted recovery copy. Railway remains the runtime source of truth and retains every original value; Doppler is not connected to deployment and saving this inventory does not redeploy the service.
+
+`NODE_ENV`, `ALLOWED_ORIGINS`, and explicit `TURN_*` values are optional runtime configuration, not missing production secrets. Production currently uses the Metered credentials instead of duplicating both TURN configuration families. Net-new staging values must not copy production credentials unless compatibility requires it and the copy is explicitly approved.
 
 ## Rollback
 
