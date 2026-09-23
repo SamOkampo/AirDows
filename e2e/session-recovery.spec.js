@@ -111,15 +111,22 @@ test('recovers a paired session after signaling loss and transfers again', async
     await Promise.all([waitForDiagnostics(sender.page), waitForDiagnostics(receiver.page)]);
     await pair(sender.page, receiver.page);
 
-    // A short full-network interruption forces Socket.IO to disconnect and exercises
-    // the browser recovery path without adding a production-only test hook. WebRTC may
-    // also need to be rebuilt, which is the behavior this integration test must prove.
+    const initialSenderConnection = await connectionState(sender.page);
+    expect(initialSenderConnection?.generation).toEqual(expect.any(Number));
+
+    // A short full-network interruption forces Socket.IO to disconnect. The existing
+    // peer DataChannel can legitimately remain open while Chromium is offline, so do
+    // not use DataChannel closure as evidence of signaling loss. Instead, require a
+    // new diagnostics connection generation after network restoration, then prove the
+    // recovered peer path is usable with a complete transfer + ACK + explicit download.
     await sender.context.setOffline(true);
-    await expect.poll(
-      async () => (await connectionState(sender.page))?.dataChannelState,
-      { timeout: 15_000 }
-    ).not.toBe('open');
+    await sender.page.waitForTimeout(1_000);
     await sender.context.setOffline(false);
+
+    await expect.poll(
+      async () => (await connectionState(sender.page))?.generation,
+      { timeout: RECOVERY_TIMEOUT_MS }
+    ).toBeGreaterThan(initialSenderConnection.generation);
 
     await waitForOpenDataChannels(sender.page, receiver.page, RECOVERY_TIMEOUT_MS);
     await transferAndDownload(sender.page, receiver.page);
