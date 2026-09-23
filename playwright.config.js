@@ -19,7 +19,7 @@ const startLocalServer = process.env.AIRDOWS_E2E_START_LOCAL_SERVER === '1';
 
 const config = {
   testDir: './e2e',
-  testMatch: 'transfer-performance.spec.js',
+  testMatch: ['transfer-performance.spec.js', 'session-recovery.spec.js'],
   fullyParallel: false,
   workers: 1,
   retries: 0,
