@@ -550,13 +550,23 @@ test('pairs two devices and establishes a real transfer performance baseline', a
 
       expect(senderTransfers).toHaveLength(files.length);
       expect(receiverTransfers).toHaveLength(files.length);
-      await expect.poll(
-        () => devices.receiver.downloadCount,
-        {
-          message: 'Receiver completion did not produce exactly one download per file.',
-          timeout: 15_000
-        }
-      ).toBe(receiverDownloadsInitial + files.length);
+      await devices.receiver.page.waitForTimeout(250);
+      expect(devices.receiver.downloadCount).toBe(receiverDownloadsInitial);
+
+      const readyDownloads = devices.receiver.page.locator(
+        '#received-files-list .received-file-item.is-ready'
+      );
+      await expect(readyDownloads).toHaveCount(files.length);
+      await expect(readyDownloads.locator('.received-file-status'))
+        .toHaveText(Array(files.length).fill('Ready to download'));
+
+      let secondPendingHref = null;
+      if (files.length === 2) {
+        const pendingHrefs = await readyDownloads.locator('.received-file-download')
+          .evaluateAll((links) => links.map((link) => link.href));
+        expect(new Set(pendingHrefs).size).toBe(2);
+        secondPendingHref = pendingHrefs[1];
+      }
 
       for (let index = 0; index < files.length; index += 1) {
         const expectedSize = files[index].buffer.length;
@@ -603,6 +613,30 @@ test('pairs two devices and establishes a real transfer performance baseline', a
         if (index > 0) {
           expect(senderSnapshot.sequence).toBeGreaterThan(senderTransfers[index - 1].sequence);
           expect(receiverSnapshot.sequence).toBeGreaterThan(receiverTransfers[index - 1].sequence);
+        }
+
+        const receivedRow = devices.receiver.page.locator(
+          '#received-files-list .received-file-item.is-ready',
+          { hasText: files[index].name }
+        );
+        await expect(receivedRow).toHaveCount(1);
+        const downloadPromise = devices.receiver.page.waitForEvent('download');
+        await receivedRow.locator('.received-file-download').click();
+        const download = await downloadPromise;
+        expect(download.suggestedFilename()).toBe(files[index].name);
+        await expect(devices.receiver.page.locator(
+          '#received-files-list .received-file-item.is-downloaded',
+          { hasText: files[index].name }
+        )).toContainText('Downloaded');
+        expect(devices.receiver.downloadCount).toBe(receiverDownloadsInitial + index + 1);
+
+        if (files.length === 2 && index === 0) {
+          const secondPendingDownload = devices.receiver.page.locator(
+            '#received-files-list .received-file-item.is-ready',
+            { hasText: files[1].name }
+          ).locator('.received-file-download');
+          await expect(secondPendingDownload).toBeVisible();
+          await expect(secondPendingDownload).toHaveAttribute('href', secondPendingHref);
         }
 
         reportIndex += 1;

@@ -150,38 +150,95 @@ function createPairingPrivacyFacade(helper) {
   });
 }
 
-function createReceivedBlobUrlLifecycle(downloadLink, urlApi) {
-  let activeUrl = null;
+function createReceivedDownloadsManager(
+  urlApi,
+  scheduleRelease = globalThis.setTimeout,
+  releaseDelayMs = 1000
+) {
+  const downloads = new Map();
+  let nextId = 1;
 
-  const clear = () => {
-    if (!activeUrl) return false;
-    const urlToRevoke = activeUrl;
-    activeUrl = null;
-    downloadLink.href = '#';
-    downloadLink.removeAttribute('download');
+  const createSnapshot = (item) => Object.freeze({
+    id: item.id,
+    fileName: item.fileName,
+    size: item.size,
+    status: item.status,
+    url: item.url
+  });
+
+  const revokeUrl = (id) => {
+    const item = downloads.get(id);
+    if (!item || !item.url) return false;
+    const urlToRevoke = item.url;
+    item.url = null;
     urlApi.revokeObjectURL(urlToRevoke);
     return true;
   };
 
-  const install = (blob, fileName) => {
-    clear();
-    const nextUrl = urlApi.createObjectURL(blob);
-    activeUrl = nextUrl;
-    downloadLink.href = nextUrl;
-    downloadLink.setAttribute('download', fileName);
-    return nextUrl;
+  const release = (id) => {
+    const revoked = revokeUrl(id);
+    downloads.delete(id);
+    return revoked;
   };
 
+  const install = (blob, fileName) => {
+    const item = {
+      id: nextId,
+      fileName: String(fileName || ''),
+      size: Number(blob?.size || 0),
+      status: 'ready',
+      url: urlApi.createObjectURL(blob),
+      releaseScheduled: false
+    };
+    nextId += 1;
+    downloads.set(item.id, item);
+    return createSnapshot(item);
+  };
+
+  const startDownload = (id) => {
+    const item = downloads.get(id);
+    if (!item || item.status !== 'ready' || !item.url) return false;
+    item.status = 'downloaded';
+    if (!item.releaseScheduled) {
+      item.releaseScheduled = true;
+      scheduleRelease(() => revokeUrl(id), releaseDelayMs);
+    }
+    return true;
+  };
+
+  const clearAll = () => {
+    let released = 0;
+    for (const item of downloads.values()) {
+      if (item.url && revokeUrl(item.id)) released += 1;
+    }
+    downloads.clear();
+    return released;
+  };
+
+  const getItems = () => Object.freeze(
+    Array.from(downloads.values(), createSnapshot)
+  );
+
+  const getPendingItems = () => Object.freeze(
+    Array.from(downloads.values())
+      .filter((item) => item.status === 'ready' && Boolean(item.url))
+      .map(createSnapshot)
+  );
+
   return Object.freeze({
-    clear,
+    clearAll,
+    getItems,
+    getPendingItems,
     install,
-    getActiveUrl: () => activeUrl
+    release,
+    startDownload
   });
 }
 
-function clearReceivedBlobUrlOnPageHide(event, receivedBlobUrls) {
+function clearReceivedDownloadsOnPageHide(event, receivedDownloads) {
   if (event.persisted === true) return false;
-  return receivedBlobUrls.clear();
+  receivedDownloads.clearAll();
+  return true;
 }
 
 function isAutomaticReconnectAllowed(sessionState) {
@@ -317,9 +374,12 @@ document.addEventListener('DOMContentLoaded', () => {
   const completedCard = document.getElementById('completed-card');
   const completedFileName = document.getElementById('completed-file-name');
   const completedFileSize = document.getElementById('completed-file-size');
-  const btnDownload = document.getElementById('btn-download');
   const btnResetTransfer = document.getElementById('btn-reset-transfer');
-  const receivedBlobUrls = createReceivedBlobUrlLifecycle(btnDownload, URL);
+  const receivedFilesCard = document.getElementById('received-files-card');
+  const receivedFilesSummary = document.getElementById('received-files-summary');
+  const receivedFilesList = document.getElementById('received-files-list');
+  const btnReceiveAnother = document.getElementById('btn-receive-another');
+  const receivedDownloads = createReceivedDownloadsManager(URL);
 
   // History Elements
   const historyContainer = document.getElementById('history-container');
@@ -493,6 +553,87 @@ document.addEventListener('DOMContentLoaded', () => {
     const sizes = ['Bytes', 'KB', 'MB', 'GB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  }
+
+  function renderReceivedFiles() {
+    const items = receivedDownloads.getItems();
+    const pendingItems = receivedDownloads.getPendingItems();
+    receivedFilesCard.classList.toggle('hidden', items.length === 0);
+    receivedFilesSummary.textContent = translate(
+      pendingItems.length > 0 ? 'download_pending_files' : 'downloaded'
+    );
+    receivedFilesList.replaceChildren();
+
+    items.forEach((item) => {
+      const row = document.createElement('div');
+      row.className = `received-file-item is-${item.status}`;
+      row.setAttribute('role', 'listitem');
+
+      const info = document.createElement('div');
+      info.className = 'received-file-info';
+
+      const name = document.createElement('span');
+      name.className = 'received-file-name';
+      name.textContent = item.fileName;
+      name.title = item.fileName;
+
+      const meta = document.createElement('div');
+      meta.className = 'received-file-meta';
+
+      const size = document.createElement('span');
+      size.textContent = formatBytes(item.size);
+
+      const separator = document.createElement('span');
+      separator.setAttribute('aria-hidden', 'true');
+      separator.textContent = '·';
+
+      const status = document.createElement('span');
+      status.className = 'received-file-status';
+      status.textContent = translate(item.status === 'ready' ? 'ready_to_download' : 'downloaded');
+
+      meta.appendChild(size);
+      meta.appendChild(separator);
+      meta.appendChild(status);
+      info.appendChild(name);
+      info.appendChild(meta);
+      row.appendChild(info);
+
+      if (item.status === 'ready' && item.url) {
+        const downloadLink = document.createElement('a');
+        downloadLink.className = 'btn btn-primary received-file-download';
+        downloadLink.href = item.url;
+        downloadLink.download = item.fileName;
+        downloadLink.textContent = translate('btn_download');
+        downloadLink.setAttribute('aria-label', `${translate('btn_download')}: ${item.fileName}`);
+        downloadLink.addEventListener('click', (event) => {
+          const fileCountBucket = receivedDownloads.getPendingItems().length === 1
+            ? 'one'
+            : 'multiple';
+          if (!receivedDownloads.startDownload(item.id)) {
+            event.preventDefault();
+            return;
+          }
+
+          downloadLink.setAttribute('aria-disabled', 'true');
+          status.textContent = translate('downloaded');
+          row.classList.remove('is-ready');
+          row.classList.add('is-downloaded');
+          trackFlowAnalytics('receiver_download_clicked', {
+            file_count_bucket: fileCountBucket
+          });
+          setTimeout(renderReceivedFiles, 0);
+        });
+        row.appendChild(downloadLink);
+      }
+
+      receivedFilesList.appendChild(row);
+    });
+  }
+
+  function clearReceivedDownloads() {
+    const released = receivedDownloads.clearAll();
+    renderReceivedFiles();
+    return released;
   }
 
   function switchView(viewName) {
@@ -1145,6 +1286,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!recovered) {
       sessionRecoveryState = markManualActionDelivered(sessionRecoveryState);
       webrtcManager.prepareForNewPairingSignals();
+      clearReceivedDownloads();
       connectionEstablishedTracked = false;
       trackFlowAnalytics('room_joined', {
         role,
@@ -1231,6 +1373,7 @@ document.addEventListener('DOMContentLoaded', () => {
     reconnectAttempts = clearedReconnect.attempts;
     sessionRecoveryState = 'manual-reconnect';
     p2pConnected = false;
+    clearReceivedDownloads();
     switchView('setup');
   };
 
@@ -1344,7 +1487,6 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   webrtcManager.onFileTransferStart = (fileName, totalBytes, isSending, options = {}) => {
-    receivedBlobUrls.clear();
     activeTransferMode = options.writeMode || 'send';
     transferIsActive = true;
     acquireTransferWakeLock();
@@ -1426,42 +1568,28 @@ document.addEventListener('DOMContentLoaded', () => {
     updateOnboarding(4, { complete: true });
     progressCard.classList.add('hidden');
     networkDiagnostics.classList.add('hidden');
-    if (sessionRecoveryState === 'signaling-disconnected' || sessionRecoveryState === 'recovering') {
-      completedCard.classList.add('hidden');
-    } else {
-      completedCard.classList.remove('hidden');
-    }
-
     completedFileName.textContent = fileName;
 
     if (options.savedToDisk) {
-      receivedBlobUrls.clear();
+      completedCard.classList.toggle(
+        'hidden',
+        sessionRecoveryState === 'signaling-disconnected' || sessionRecoveryState === 'recovering'
+      );
       completedFileSize.textContent = translate('saved_to_disk');
-      btnDownload.classList.add('hidden');
       appendHistoryItem(fileName, translate('saved_to_disk'), 'received');
     } else if (fileBlob) {
-      // Received mode
       const sizeStr = formatBytes(fileBlob.size);
-      completedFileSize.textContent = sizeStr;
-      
-      receivedBlobUrls.install(fileBlob, fileName);
-      btnDownload.classList.remove('hidden');
-
+      completedCard.classList.add('hidden');
+      receivedDownloads.install(fileBlob, fileName);
+      renderReceivedFiles();
       appendHistoryItem(fileName, sizeStr, 'received');
-
-      // Premium UX: Auto-trigger download
-      try {
-        btnDownload.click();
-      } catch (err) {
-        console.error('Auto download failed, user must click button manually', err);
-      }
     } else {
-      // Sent mode
-      receivedBlobUrls.clear();
       const sizeStr = formatBytes(currentFileTransferSize);
+      completedCard.classList.toggle(
+        'hidden',
+        sessionRecoveryState === 'signaling-disconnected' || sessionRecoveryState === 'recovering'
+      );
       completedFileSize.textContent = translate('sent_success');
-      btnDownload.classList.add('hidden');
-      
       appendHistoryItem(fileName, sizeStr, 'sent');
     }
   };
@@ -1493,7 +1621,6 @@ document.addEventListener('DOMContentLoaded', () => {
   };
 
   webrtcManager.onTransferError = (details = {}) => {
-    receivedBlobUrls.clear();
     activeTransferMode = 'idle';
     transferIsActive = false;
     releaseTransferWakeLock();
@@ -1514,7 +1641,6 @@ document.addEventListener('DOMContentLoaded', () => {
   };
 
   webrtcManager.onFileTransferCancelled = (fileName, isLocal) => {
-    receivedBlobUrls.clear();
     activeTransferMode = 'idle';
     transferIsActive = false;
     releaseTransferWakeLock();
@@ -1598,7 +1724,12 @@ document.addEventListener('DOMContentLoaded', () => {
     completedCard.classList.add('hidden');
     dropZone.classList.remove('hidden');
     updateOnboarding(3);
-    receivedBlobUrls.clear();
+  });
+
+  btnReceiveAnother.addEventListener('click', () => {
+    completedCard.classList.add('hidden');
+    dropZone.classList.remove('hidden');
+    updateOnboarding(3);
   });
 
   btnSendText.addEventListener('click', () => {
@@ -1679,7 +1810,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // --- APP RESET & CLEANUP ---
   function resetApp({ preserveQueue = false } = {}) {
-    receivedBlobUrls.clear();
+    clearReceivedDownloads();
     if (reconnectTimer) {
       clearTimeout(reconnectTimer);
       reconnectTimer = null;
@@ -1773,13 +1904,16 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   window.addEventListener('airdows:language-change', () => {
-    renderQueue();
-    updateConnectedStatus();
-    updateOnboarding(onboardingStep, { complete: onboardingComplete });
+    queueMicrotask(() => {
+      renderQueue();
+      renderReceivedFiles();
+      updateConnectedStatus();
+      updateOnboarding(onboardingStep, { complete: onboardingComplete });
+    });
   });
 
   window.addEventListener('pagehide', (event) => {
-    clearReceivedBlobUrlOnPageHide(event, receivedBlobUrls);
+    clearReceivedDownloadsOnPageHide(event, receivedDownloads);
   });
 
   document.addEventListener('visibilitychange', () => {

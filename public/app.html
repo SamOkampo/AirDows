@@ -330,14 +330,26 @@
               <span id="completed-file-size">0 MB</span>
             </div>
             <div class="action-buttons">
-              <a id="btn-download" class="btn btn-primary" download>
-                <span data-i18n="btn_download">Download File</span>
-              </a>
               <button id="btn-reset-transfer" class="btn btn-secondary">
                 <span data-i18n="btn_transfer_another">Transfer Another File</span>
               </button>
             </div>
           </div>
+
+          <section id="received-files-card" class="received-files-card hidden"
+            aria-labelledby="received-files-title">
+            <div class="received-files-header">
+              <div>
+                <h3 id="received-files-title" data-i18n="received_files_title">Received files</h3>
+                <p id="received-files-summary" data-i18n="download_pending_files">Download pending files</p>
+              </div>
+            </div>
+            <div id="received-files-list" class="received-files-list" role="list"
+              aria-live="polite" aria-relevant="additions text"></div>
+            <button id="btn-receive-another" class="btn btn-secondary" type="button">
+              <span data-i18n="btn_transfer_another">Transfer another file</span>
+            </button>
+          </section>
 
         </div>
       </div>
@@ -447,7 +459,11 @@
         btn_send_text: "Send Text",
         history_title: "Session History",
         transfer_completed: "Transfer Completed!",
-        btn_download: "Download File",
+        received_files_title: "Received files",
+        ready_to_download: "Ready to download",
+        btn_download: "Download",
+        downloaded: "Downloaded",
+        download_pending_files: "Download pending files",
         btn_transfer_another: "Transfer Another File",
         queue_title: "Review files",
         queue_waiting: "files ready",
@@ -595,7 +611,11 @@
         btn_send_text: "Enviar Texto",
         history_title: "Historial de la Sesión",
         transfer_completed: "¡Transferencia completada!",
-        btn_download: "Descargar archivo",
+        received_files_title: "Archivos recibidos",
+        ready_to_download: "Listo para descargar",
+        btn_download: "Descargar",
+        downloaded: "Descargado",
+        download_pending_files: "Descargar archivos pendientes",
         btn_transfer_another: "Transferir otro archivo",
         queue_title: "Revisa los archivos",
         queue_waiting: "archivos listos",
