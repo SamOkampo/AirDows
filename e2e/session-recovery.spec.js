@@ -114,15 +114,14 @@ test('recovers a paired session after signaling loss and transfers again', async
     const initialSenderConnection = await connectionState(sender.page);
     expect(initialSenderConnection?.generation).toEqual(expect.any(Number));
 
-    // Wait for the SocketManager's existing disconnect signal instead of a generic UI
-    // status change. WebRTC/network UI can change before Socket.IO has processed the loss,
-    // and restoring connectivity at that point races recover-session.
-    const disconnectSeen = sender.page.waitForEvent('console', {
-      predicate: (message) => message.text().includes('Disconnected from signaling server'),
-      timeout: 15_000
-    });
+    // The app renders this exact recovery state only after SocketManager reports
+    // signaling-disconnected/recovering. Unlike a generic status change, it cannot be
+    // satisfied merely by WebRTC reacting to the offline transition.
     await sender.context.setOffline(true);
-    await disconnectSeen;
+    await expect(sender.page.locator('#connection-status-text')).toHaveText(
+      /^(Try again|Intenta nuevamente)$/,
+      { timeout: 15_000 }
+    );
     await sender.context.setOffline(false);
 
     await expect.poll(
