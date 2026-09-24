@@ -405,8 +405,22 @@ class SocketManager {
   }
 
   recoverSession() {
-    if (!this.socket || !this.socket.connected || !this.recovery.session ||
-        this.recoveryRequestInFlight) return false;
+    if (!this.socket) {
+      console.info('[RecoveryClient] recovery blocked: no socket');
+      return false;
+    }
+    if (!this.socket.connected) {
+      console.info('[RecoveryClient] recovery blocked: transport disconnected');
+      return false;
+    }
+    if (!this.recovery.session) {
+      console.info('[RecoveryClient] recovery blocked: no session');
+      return false;
+    }
+    if (this.recoveryRequestInFlight) {
+      console.info('[RecoveryClient] recovery blocked: request already in flight');
+      return false;
+    }
     this.recovery.markRecovering();
     this.recoveryRequestInFlight = true;
     this.recoveryRequestGeneration = this.connectionGeneration;
