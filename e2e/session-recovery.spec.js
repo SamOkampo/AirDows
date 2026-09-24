@@ -124,6 +124,12 @@ test('recovers a paired session after signaling loss and transfers again', async
     );
     await sender.context.setOffline(false);
 
+    // Playwright's network emulation restores transport availability but does not
+    // guarantee delivery of the browser `online` event that AirDows uses to call
+    // SocketManager.ensureConnected(). Dispatch that real public browser event after
+    // transport restoration so this test deterministically exercises the same app path.
+    await sender.page.evaluate(() => window.dispatchEvent(new Event('online')));
+
     await expect.poll(
       async () => (await connectionState(sender.page))?.generation,
       { timeout: RECOVERY_TIMEOUT_MS }
