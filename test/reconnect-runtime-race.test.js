@@ -593,7 +593,7 @@ test('online recovery explicitly reconnects the existing Socket.IO instance', ()
     const appSource = fs.readFileSync(path.join(ROOT, 'public/js/app.js'), 'utf8');
     assert.match(
       appSource,
-      /window\.addEventListener\('online',[\s\S]{0,200}socketManager\.ensureConnected\(\)/
+      /window\.addEventListener\('online',[\s\S]{0,240}socketManager\.ensureConnected\(\{ retryRecovery: true \}\)/
     );
   } finally {
     context.restore();
@@ -631,7 +631,7 @@ test('online recovery retries an in-flight request after transport reconnects', 
 
     // No server response arrives for the first emit. The browser's explicit
     // online path must retry even though Socket.IO already reports connected.
-    assert.equal(context.manager.ensureConnected(), true);
+    assert.equal(context.manager.ensureConnected({ retryRecovery: true }), true);
 
     assert.equal(context.socket.connectCalls, 1);
     assert.deepEqual(
