@@ -178,9 +178,10 @@ class SocketManager {
       } else {
         this.flushPendingAbandon();
       }
+      const recoveryStateEligible = ['signaling-disconnected', 'recovering'].includes(this.recovery.state);
+      const reconnectEligible = generation > 1 && ['paired', 'recovered'].includes(this.recovery.state);
       const shouldRecover = !hadPendingManualAction && !this.pendingAbandonSession &&
-        Boolean(this.recovery.session) &&
-        ['signaling-disconnected', 'recovering'].includes(this.recovery.state);
+        Boolean(this.recovery.session) && (recoveryStateEligible || reconnectEligible);
       if (shouldRecover) this.recovery.markRecovering();
       console.log('Connected to signaling server');
       if (this.onConnect) this.onConnect({
