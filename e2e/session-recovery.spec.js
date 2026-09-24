@@ -107,6 +107,9 @@ test('recovers a paired session after signaling loss and transfers again', async
     const text = message.text();
     if (text.startsWith('[RecoveryClient]')) console.log(text);
   });
+  sender.page.on('pageerror', (error) => {
+    console.log('[RecoveryClientError]', error.name, error.message);
+  });
 
   try {
     await Promise.all([
