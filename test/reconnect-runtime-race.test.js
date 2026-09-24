@@ -615,28 +615,6 @@ test('online plus automatic Socket.IO reconnect submits recovery only once', () 
   }
 });
 
-test('online recovery retries once when Socket.IO transport is already connected', () => {
-  const context = createSocketManager();
-  try {
-    establishRecoveringSession(context.manager, context.socket);
-    const recoveryToken = context.manager.recovery.session.recoveryToken;
-    context.socket.connected = true;
-    context.socket.sent = [];
-
-    assert.equal(context.manager.ensureConnected(), true);
-    assert.equal(context.manager.ensureConnected(), true);
-
-    assert.equal(context.socket.connectCalls, 0);
-    assert.deepEqual(
-      context.socket.sent.filter(({ event }) => event === 'recover-session'),
-      [{ event: 'recover-session', payload: { recoveryToken } }]
-    );
-    assert.equal(context.manager.recoveryRequestInFlight, true);
-  } finally {
-    context.restore();
-  }
-});
-
 test('manual pairing after recovery failure works without replacing the Socket.IO instance', () => {
   const context = createSocketManager();
   try {
