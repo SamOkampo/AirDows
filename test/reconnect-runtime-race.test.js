@@ -615,21 +615,31 @@ test('online plus automatic Socket.IO reconnect submits recovery only once', () 
   }
 });
 
-test('online recovery retries when the signaling transport reconnected before recovery state settled', () => {
+test('online recovery retries an in-flight request after transport reconnects', () => {
   const context = createSocketManager();
   try {
     establishRecoveringSession(context.manager, context.socket);
     const recoveryToken = context.manager.recovery.session.recoveryToken;
-    context.socket.connected = true;
-    context.socket.sent = [];
 
-    assert.equal(context.manager.ensureConnected(), true);
-    assert.equal(context.manager.ensureConnected(), true);
-
-    assert.equal(context.socket.connectCalls, 0);
+    context.manager.ensureConnected();
+    context.socket.receive('connect');
     assert.deepEqual(
       context.socket.sent.filter(({ event }) => event === 'recover-session'),
       [{ event: 'recover-session', payload: { recoveryToken } }]
+    );
+    assert.equal(context.manager.recoveryRequestInFlight, true);
+
+    // No server response arrives for the first emit. The browser's explicit
+    // online path must retry even though Socket.IO already reports connected.
+    assert.equal(context.manager.ensureConnected(), true);
+
+    assert.equal(context.socket.connectCalls, 1);
+    assert.deepEqual(
+      context.socket.sent.filter(({ event }) => event === 'recover-session'),
+      [
+        { event: 'recover-session', payload: { recoveryToken } },
+        { event: 'recover-session', payload: { recoveryToken } }
+      ]
     );
     assert.equal(context.manager.recoveryRequestInFlight, true);
   } finally {
