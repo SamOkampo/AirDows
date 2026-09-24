@@ -1,8 +1,8 @@
 class SessionRecoveryState {
   constructor(options = {}) {
     this.timeoutMs = Number.isSafeInteger(options.timeoutMs) ? Math.max(1, options.timeoutMs) : 45_000;
-    this.setTimeoutFn = options.setTimeoutFn || setTimeout;
-    this.clearTimeoutFn = options.clearTimeoutFn || clearTimeout;
+    this.setTimeoutFn = options.setTimeoutFn || globalThis.setTimeout.bind(globalThis);
+    this.clearTimeoutFn = options.clearTimeoutFn || globalThis.clearTimeout.bind(globalThis);
     this.onStateChange = options.onStateChange || null;
     this.onTimeout = options.onTimeout || null;
     this.state = 'unpaired';
@@ -191,14 +191,7 @@ class SocketManager {
       
       // Request ICE config immediately on connection
       this.requestIceConfig();
-      if (shouldRecover) {
-        setTimeout(() => {
-          if (this.socket !== socket || !socket.connected ||
-              this.connectionGeneration !== generation ||
-              !['signaling-disconnected', 'recovering'].includes(this.recovery.state)) return;
-          this.recoverSession();
-        }, 0);
-      }
+      if (shouldRecover) this.recoverSession();
     });
 
     socket.on('ice-config', (config) => {
