@@ -496,7 +496,7 @@ test('successful recovery clears the client recovery timeout', () => {
   assert.equal(timers.size, 0);
 });
 
-test('Socket.IO reconnect automatically submits only the in-memory recovery token', () => {
+test('Socket.IO reconnect automatically submits only the in-memory recovery token', async () => {
   const socket = new FakeSocket();
   const previousWindow = global.window;
   const previousIo = global.io;
@@ -513,6 +513,7 @@ test('Socket.IO reconnect automatically submits only the in-memory recovery toke
     socket.receive('disconnect', 'transport close');
     socket.connected = true;
     socket.receive('connect');
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     const recoveryEvent = socket.sent.findLast((entry) => entry.event === 'recover-session');
     assert.deepEqual(recoveryEvent, {
@@ -527,7 +528,7 @@ test('Socket.IO reconnect automatically submits only the in-memory recovery toke
   }
 });
 
-test('client stores a delivered replacement before acknowledging it', () => {
+test('client stores a delivered replacement before acknowledging it', async () => {
   const socket = new FakeSocket();
   const previousWindow = global.window;
   const previousIo = global.io;
@@ -542,6 +543,7 @@ test('client stores a delivered replacement before acknowledging it', () => {
     });
     socket.receive('disconnect', 'transport close');
     socket.receive('connect');
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     let tokenAtAcknowledgement = null;
     const originalEmit = socket.emit.bind(socket);
@@ -725,7 +727,7 @@ test('a late recovered event cannot overwrite a new manual pairing attempt', () 
   }
 });
 
-test('multiple connect events send only one recovery request per logical connection', () => {
+test('multiple connect events send only one recovery request per logical connection', async () => {
   const socket = new FakeSocket();
   const previousWindow = global.window;
   const previousIo = global.io;
@@ -741,6 +743,7 @@ test('multiple connect events send only one recovery request per logical connect
     socket.receive('disconnect', 'transport close');
     socket.receive('connect');
     socket.receive('connect');
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     assert.equal(socket.sent.filter((entry) => entry.event === 'recover-session').length, 1);
   } finally {
