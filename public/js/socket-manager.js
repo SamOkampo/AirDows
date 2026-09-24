@@ -304,6 +304,10 @@ class SocketManager {
   ensureConnected() {
     if (this.socket?.connected) {
       this.signalingConnectRequested = false;
+      if (this.recovery.session &&
+          ['signaling-disconnected', 'recovering'].includes(this.recovery.state)) {
+        this.recoverSession();
+      }
       return true;
     }
 
