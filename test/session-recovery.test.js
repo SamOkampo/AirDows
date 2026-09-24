@@ -479,6 +479,39 @@ test('recovery timeout is deterministic and clears local session identity', () =
   assert.deepEqual(states, ['paired', 'signaling-disconnected', 'recovering', 'recovery-failed']);
 });
 
+test('default recovery timers keep the browser global as their receiver', () => {
+  const originalSetTimeout = globalThis.setTimeout;
+  const originalClearTimeout = globalThis.clearTimeout;
+  let setTimeoutReceiver = null;
+  let clearTimeoutReceiver = null;
+  const timer = { unref() {} };
+
+  globalThis.setTimeout = function fakeSetTimeout() {
+    setTimeoutReceiver = this;
+    return timer;
+  };
+  globalThis.clearTimeout = function fakeClearTimeout() {
+    clearTimeoutReceiver = this;
+  };
+
+  try {
+    const recovery = new SessionRecoveryState();
+    recovery.establish({
+      recoveryToken: 'a'.repeat(64),
+      code: '1234',
+      role: 'receiver'
+    });
+    recovery.markSignalingDisconnected();
+    recovery.clearTimer();
+
+    assert.equal(setTimeoutReceiver, globalThis);
+    assert.equal(clearTimeoutReceiver, globalThis);
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+    globalThis.clearTimeout = originalClearTimeout;
+  }
+});
+
 test('successful recovery clears the client recovery timeout', () => {
   const timers = createFakeTimers();
   const recovery = new SessionRecoveryState({
@@ -496,7 +529,7 @@ test('successful recovery clears the client recovery timeout', () => {
   assert.equal(timers.size, 0);
 });
 
-test('Socket.IO reconnect automatically submits only the in-memory recovery token', async () => {
+test('Socket.IO reconnect automatically submits only the in-memory recovery token', () => {
   const socket = new FakeSocket();
   const previousWindow = global.window;
   const previousIo = global.io;
@@ -513,7 +546,6 @@ test('Socket.IO reconnect automatically submits only the in-memory recovery toke
     socket.receive('disconnect', 'transport close');
     socket.connected = true;
     socket.receive('connect');
-    await new Promise((resolve) => setTimeout(resolve, 0));
 
     const recoveryEvent = socket.sent.findLast((entry) => entry.event === 'recover-session');
     assert.deepEqual(recoveryEvent, {
@@ -528,7 +560,7 @@ test('Socket.IO reconnect automatically submits only the in-memory recovery toke
   }
 });
 
-test('client stores a delivered replacement before acknowledging it', async () => {
+test('client stores a delivered replacement before acknowledging it', () => {
   const socket = new FakeSocket();
   const previousWindow = global.window;
   const previousIo = global.io;
@@ -543,7 +575,6 @@ test('client stores a delivered replacement before acknowledging it', async () =
     });
     socket.receive('disconnect', 'transport close');
     socket.receive('connect');
-    await new Promise((resolve) => setTimeout(resolve, 0));
 
     let tokenAtAcknowledgement = null;
     const originalEmit = socket.emit.bind(socket);
@@ -727,7 +758,7 @@ test('a late recovered event cannot overwrite a new manual pairing attempt', () 
   }
 });
 
-test('multiple connect events send only one recovery request per logical connection', async () => {
+test('multiple connect events send only one recovery request per logical connection', () => {
   const socket = new FakeSocket();
   const previousWindow = global.window;
   const previousIo = global.io;
@@ -743,7 +774,6 @@ test('multiple connect events send only one recovery request per logical connect
     socket.receive('disconnect', 'transport close');
     socket.receive('connect');
     socket.receive('connect');
-    await new Promise((resolve) => setTimeout(resolve, 0));
 
     assert.equal(socket.sent.filter((entry) => entry.event === 'recover-session').length, 1);
   } finally {
