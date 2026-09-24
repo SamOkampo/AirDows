@@ -187,15 +187,22 @@ class SocketManager {
         : '[RecoveryClient] recovery not eligible on connect');
       if (shouldRecover) this.recovery.markRecovering();
       console.log('Connected to signaling server');
+      console.info('[RecoveryClient] invoking app connect handler');
       if (this.onConnect) this.onConnect({
         recovering: shouldRecover,
         generation,
         manualAction: hadPendingManualAction
       });
+      console.info('[RecoveryClient] app connect handler completed');
       
       // Request ICE config immediately on connection
+      console.info('[RecoveryClient] requesting ICE config');
       this.requestIceConfig();
-      if (shouldRecover) this.recoverSession();
+      console.info('[RecoveryClient] ICE config request completed');
+      if (shouldRecover) {
+        console.info('[RecoveryClient] invoking recovery request');
+        this.recoverSession();
+      }
     });
 
     socket.on('ice-config', (config) => {
