@@ -1900,7 +1900,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   window.addEventListener('online', () => {
     showToast(translate('connection_recovered'));
-    socketManager.ensureConnected();
+    socketManager.ensureConnected({ retryRecovery: true });
   });
 
   window.addEventListener('airdows:language-change', () => {
