@@ -306,6 +306,10 @@ class SocketManager {
       this.signalingConnectRequested = false;
       if (this.recovery.session &&
           ['signaling-disconnected', 'recovering'].includes(this.recovery.state)) {
+        // A transport may reconnect before an earlier recovery emit is confirmed.
+        // Explicit online recovery is safe to retry because the server treats
+        // an already-bound recovery request idempotently.
+        this.recoveryRequestInFlight = false;
         this.recoverSession();
       }
       return true;
