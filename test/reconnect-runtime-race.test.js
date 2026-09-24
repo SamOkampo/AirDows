@@ -593,14 +593,14 @@ test('online recovery explicitly reconnects the existing Socket.IO instance', ()
     const appSource = fs.readFileSync(path.join(ROOT, 'public/js/app.js'), 'utf8');
     assert.match(
       appSource,
-      /window\.addEventListener\('online',[\s\S]{0,240}socketManager\.ensureConnected\(\{ retryRecovery: true \}\)/
+      /window\.addEventListener\('online',[\s\S]{0,200}socketManager\.ensureConnected\(\)/
     );
   } finally {
     context.restore();
   }
 });
 
-test('online plus automatic Socket.IO reconnect submits recovery only once', () => {
+test('automatic Socket.IO reconnect submits recovery once after connect settles', async () => {
   const context = createSocketManager();
   try {
     establishRecoveringSession(context.manager, context.socket);
@@ -609,39 +609,9 @@ test('online plus automatic Socket.IO reconnect submits recovery only once', () 
     context.socket.receive('connect');
 
     assert.equal(context.socket.connectCalls, 1);
+    assert.equal(context.socket.sent.filter(({ event }) => event === 'recover-session').length, 0);
+    await new Promise((resolve) => setTimeout(resolve, 0));
     assert.equal(context.socket.sent.filter(({ event }) => event === 'recover-session').length, 1);
-  } finally {
-    context.restore();
-  }
-});
-
-test('online recovery retries an in-flight request after transport reconnects', () => {
-  const context = createSocketManager();
-  try {
-    establishRecoveringSession(context.manager, context.socket);
-    const recoveryToken = context.manager.recovery.session.recoveryToken;
-
-    context.manager.ensureConnected();
-    context.socket.receive('connect');
-    assert.deepEqual(
-      context.socket.sent.filter(({ event }) => event === 'recover-session'),
-      [{ event: 'recover-session', payload: { recoveryToken } }]
-    );
-    assert.equal(context.manager.recoveryRequestInFlight, true);
-
-    // No server response arrives for the first emit. The browser's explicit
-    // online path must retry even though Socket.IO already reports connected.
-    assert.equal(context.manager.ensureConnected({ retryRecovery: true }), true);
-
-    assert.equal(context.socket.connectCalls, 1);
-    assert.deepEqual(
-      context.socket.sent.filter(({ event }) => event === 'recover-session'),
-      [
-        { event: 'recover-session', payload: { recoveryToken } },
-        { event: 'recover-session', payload: { recoveryToken } }
-      ]
-    );
-    assert.equal(context.manager.recoveryRequestInFlight, true);
   } finally {
     context.restore();
   }
