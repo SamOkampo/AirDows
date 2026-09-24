@@ -103,6 +103,11 @@ test('recovers a paired session after signaling loss and transfers again', async
   const sender = await createDevice(browser, baseURL);
   const receiver = await createDevice(browser, baseURL);
 
+  sender.page.on('console', (message) => {
+    const text = message.text();
+    if (text.startsWith('[RecoveryClient]')) console.log(text);
+  });
+
   try {
     await Promise.all([
       sender.page.goto('/app?diagnostics=1'),
