@@ -1,8 +1,8 @@
 class SessionRecoveryState {
   constructor(options = {}) {
     this.timeoutMs = Number.isSafeInteger(options.timeoutMs) ? Math.max(1, options.timeoutMs) : 45_000;
-    this.setTimeoutFn = options.setTimeoutFn || globalThis.setTimeout.bind(globalThis);
-    this.clearTimeoutFn = options.clearTimeoutFn || globalThis.clearTimeout.bind(globalThis);
+    this.setTimeoutFn = options.setTimeoutFn || setTimeout;
+    this.clearTimeoutFn = options.clearTimeoutFn || clearTimeout;
     this.onStateChange = options.onStateChange || null;
     this.onTimeout = options.onTimeout || null;
     this.state = 'unpaired';
@@ -169,7 +169,6 @@ class SocketManager {
     socket.on('connect', () => {
       if (this.socket !== socket || connectionActive) return;
       connectionActive = true;
-      console.info('[RecoveryClient] signaling connect callback');
       this.signalingConnectRequested = false;
       const generation = ++this.connectionGeneration;
       socketConnectionGeneration = generation;
@@ -182,27 +181,17 @@ class SocketManager {
       const shouldRecover = !hadPendingManualAction && !this.pendingAbandonSession &&
         Boolean(this.recovery.session) &&
         ['signaling-disconnected', 'recovering'].includes(this.recovery.state);
-      console.info(shouldRecover
-        ? '[RecoveryClient] recovery eligible on connect'
-        : '[RecoveryClient] recovery not eligible on connect');
       if (shouldRecover) this.recovery.markRecovering();
       console.log('Connected to signaling server');
-      console.info('[RecoveryClient] invoking app connect handler');
       if (this.onConnect) this.onConnect({
         recovering: shouldRecover,
         generation,
         manualAction: hadPendingManualAction
       });
-      console.info('[RecoveryClient] app connect handler completed');
       
       // Request ICE config immediately on connection
-      console.info('[RecoveryClient] requesting ICE config');
       this.requestIceConfig();
-      console.info('[RecoveryClient] ICE config request completed');
-      if (shouldRecover) {
-        console.info('[RecoveryClient] invoking recovery request');
-        this.recoverSession();
-      }
+      if (shouldRecover) this.recoverSession();
     });
 
     socket.on('ice-config', (config) => {
@@ -315,10 +304,6 @@ class SocketManager {
   ensureConnected() {
     if (this.socket?.connected) {
       this.signalingConnectRequested = false;
-      if (this.recovery.session &&
-          ['signaling-disconnected', 'recovering'].includes(this.recovery.state)) {
-        this.recoverSession();
-      }
       return true;
     }
 
@@ -412,26 +397,11 @@ class SocketManager {
   }
 
   recoverSession() {
-    if (!this.socket) {
-      console.info('[RecoveryClient] recovery blocked: no socket');
-      return false;
-    }
-    if (!this.socket.connected) {
-      console.info('[RecoveryClient] recovery blocked: transport disconnected');
-      return false;
-    }
-    if (!this.recovery.session) {
-      console.info('[RecoveryClient] recovery blocked: no session');
-      return false;
-    }
-    if (this.recoveryRequestInFlight) {
-      console.info('[RecoveryClient] recovery blocked: request already in flight');
-      return false;
-    }
+    if (!this.socket || !this.socket.connected || !this.recovery.session ||
+        this.recoveryRequestInFlight) return false;
     this.recovery.markRecovering();
     this.recoveryRequestInFlight = true;
     this.recoveryRequestGeneration = this.connectionGeneration;
-    console.info('[RecoveryClient] emitting recovery request');
     this.socket.emit('recover-session', {
       recoveryToken: this.recovery.session.recoveryToken
     });
