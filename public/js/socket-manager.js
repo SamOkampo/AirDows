@@ -169,6 +169,7 @@ class SocketManager {
     socket.on('connect', () => {
       if (this.socket !== socket || connectionActive) return;
       connectionActive = true;
+      console.info('[RecoveryClient] signaling connect callback');
       this.signalingConnectRequested = false;
       const generation = ++this.connectionGeneration;
       socketConnectionGeneration = generation;
@@ -181,6 +182,9 @@ class SocketManager {
       const shouldRecover = !hadPendingManualAction && !this.pendingAbandonSession &&
         Boolean(this.recovery.session) &&
         ['signaling-disconnected', 'recovering'].includes(this.recovery.state);
+      console.info(shouldRecover
+        ? '[RecoveryClient] recovery eligible on connect'
+        : '[RecoveryClient] recovery not eligible on connect');
       if (shouldRecover) this.recovery.markRecovering();
       console.log('Connected to signaling server');
       if (this.onConnect) this.onConnect({
@@ -406,6 +410,7 @@ class SocketManager {
     this.recovery.markRecovering();
     this.recoveryRequestInFlight = true;
     this.recoveryRequestGeneration = this.connectionGeneration;
+    console.info('[RecoveryClient] emitting recovery request');
     this.socket.emit('recover-session', {
       recoveryToken: this.recovery.session.recoveryToken
     });
