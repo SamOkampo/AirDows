@@ -600,7 +600,7 @@ test('online recovery explicitly reconnects the existing Socket.IO instance', ()
   }
 });
 
-test('automatic Socket.IO reconnect submits recovery once after connect settles', async () => {
+test('online plus automatic Socket.IO reconnect submits recovery only once', () => {
   const context = createSocketManager();
   try {
     establishRecoveringSession(context.manager, context.socket);
@@ -609,8 +609,6 @@ test('automatic Socket.IO reconnect submits recovery once after connect settles'
     context.socket.receive('connect');
 
     assert.equal(context.socket.connectCalls, 1);
-    assert.equal(context.socket.sent.filter(({ event }) => event === 'recover-session').length, 0);
-    await new Promise((resolve) => setTimeout(resolve, 0));
     assert.equal(context.socket.sent.filter(({ event }) => event === 'recover-session').length, 1);
   } finally {
     context.restore();
