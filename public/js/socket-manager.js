@@ -301,10 +301,10 @@ class SocketManager {
     }
   }
 
-  ensureConnected() {
+  ensureConnected({ retryRecovery = false } = {}) {
     if (this.socket?.connected) {
       this.signalingConnectRequested = false;
-      if (this.recovery.session &&
+      if (retryRecovery && this.recovery.session &&
           ['signaling-disconnected', 'recovering'].includes(this.recovery.state)) {
         // A transport may reconnect before an earlier recovery emit is confirmed.
         // Explicit online recovery is safe to retry because the server treats
