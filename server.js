@@ -616,7 +616,6 @@ io.on('connection', (socket) => {
 
   // 3. Recover a paired session using the participant's short-lived in-memory credential.
   socket.on('recover-session', (payload = {}) => {
-    console.info('[Recovery] Recovery request received');
     const limit = joinLimiter.attempt(socket.data.clientIp);
     if (!limit.allowed) {
       socket.emit('recovery-failed', { message: 'CONNECT_FAILED' });
@@ -629,7 +628,6 @@ io.on('connection', (socket) => {
       if (pairingSecurity.socketRooms.get(socket.id) !== recoveringCode) leaveAllRooms(socket);
     });
     if (!result.ok) {
-      console.warn('[Recovery] Recovery request rejected');
       socket.emit('recovery-failed', { message: 'CONNECT_FAILED' });
       return;
     }
@@ -640,7 +638,6 @@ io.on('connection', (socket) => {
     }
     if (result.alreadyConnected) return;
     if (!result.ready) {
-      console.info('[Recovery] Recovery request accepted; waiting for peer');
       socket.emit('recovery-waiting');
       return;
     }
