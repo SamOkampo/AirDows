@@ -191,7 +191,14 @@ class SocketManager {
       
       // Request ICE config immediately on connection
       this.requestIceConfig();
-      if (shouldRecover) this.recoverSession();
+      if (shouldRecover) {
+        setTimeout(() => {
+          if (this.socket !== socket || !socket.connected ||
+              this.connectionGeneration !== generation ||
+              !['signaling-disconnected', 'recovering'].includes(this.recovery.state)) return;
+          this.recoverSession();
+        }, 0);
+      }
     });
 
     socket.on('ice-config', (config) => {
@@ -301,17 +308,9 @@ class SocketManager {
     }
   }
 
-  ensureConnected({ retryRecovery = false } = {}) {
+  ensureConnected() {
     if (this.socket?.connected) {
       this.signalingConnectRequested = false;
-      if (retryRecovery && this.recovery.session &&
-          ['signaling-disconnected', 'recovering'].includes(this.recovery.state)) {
-        // A transport may reconnect before an earlier recovery emit is confirmed.
-        // Explicit online recovery is safe to retry because the server treats
-        // an already-bound recovery request idempotently.
-        this.recoveryRequestInFlight = false;
-        this.recoverSession();
-      }
       return true;
     }
 
