@@ -479,6 +479,39 @@ test('recovery timeout is deterministic and clears local session identity', () =
   assert.deepEqual(states, ['paired', 'signaling-disconnected', 'recovering', 'recovery-failed']);
 });
 
+test('default recovery timers keep the browser global as their receiver', () => {
+  const originalSetTimeout = globalThis.setTimeout;
+  const originalClearTimeout = globalThis.clearTimeout;
+  let setTimeoutReceiver = null;
+  let clearTimeoutReceiver = null;
+  const timer = { unref() {} };
+
+  globalThis.setTimeout = function fakeSetTimeout() {
+    setTimeoutReceiver = this;
+    return timer;
+  };
+  globalThis.clearTimeout = function fakeClearTimeout() {
+    clearTimeoutReceiver = this;
+  };
+
+  try {
+    const recovery = new SessionRecoveryState();
+    recovery.establish({
+      recoveryToken: 'a'.repeat(64),
+      code: '1234',
+      role: 'receiver'
+    });
+    recovery.markSignalingDisconnected();
+    recovery.clearTimer();
+
+    assert.equal(setTimeoutReceiver, globalThis);
+    assert.equal(clearTimeoutReceiver, globalThis);
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+    globalThis.clearTimeout = originalClearTimeout;
+  }
+});
+
 test('successful recovery clears the client recovery timeout', () => {
   const timers = createFakeTimers();
   const recovery = new SessionRecoveryState({

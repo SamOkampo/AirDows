@@ -103,6 +103,7 @@ test('recovers a paired session after signaling loss and transfers again', async
   const sender = await createDevice(browser, baseURL);
   const receiver = await createDevice(browser, baseURL);
 
+
   try {
     await Promise.all([
       sender.page.goto('/app?diagnostics=1'),
@@ -111,15 +112,23 @@ test('recovers a paired session after signaling loss and transfers again', async
     await Promise.all([waitForDiagnostics(sender.page), waitForDiagnostics(receiver.page)]);
     await pair(sender.page, receiver.page);
 
-    // A short full-network interruption forces Socket.IO to disconnect and exercises
-    // the browser recovery path without adding a production-only test hook. WebRTC may
-    // also need to be rebuilt, which is the behavior this integration test must prove.
+
+    // The app renders this exact recovery state only after SocketManager reports
+    // signaling-disconnected/recovering. Unlike a generic status change, it cannot be
+    // satisfied merely by WebRTC reacting to the offline transition.
     await sender.context.setOffline(true);
-    await expect.poll(
-      async () => (await connectionState(sender.page))?.dataChannelState,
+    await expect(sender.page.locator('#connection-status-text')).toHaveText(
+      /^(Try again|Intenta nuevamente)$/,
       { timeout: 15_000 }
-    ).not.toBe('open');
+    );
     await sender.context.setOffline(false);
+
+    // Playwright's network emulation restores transport availability but does not
+    // guarantee delivery of the browser `online` event that AirDows uses to call
+    // SocketManager.ensureConnected(). Dispatch that real public browser event after
+    // transport restoration so this test deterministically exercises the same app path.
+    await sender.page.evaluate(() => window.dispatchEvent(new Event('online')));
+
 
     await waitForOpenDataChannels(sender.page, receiver.page, RECOVERY_TIMEOUT_MS);
     await transferAndDownload(sender.page, receiver.page);

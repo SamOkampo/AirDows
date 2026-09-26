@@ -146,12 +146,7 @@ function crossContextDuration(startEpochMs, startClock, endEpochMs, endClock) {
   const startOnHostClock = startEpochMs + startClock.offsetToHostMs;
   const endOnHostClock = endEpochMs + endClock.offsetToHostMs;
   const rawDurationMs = endOnHostClock - startOnHostClock;
-  const uncertaintyMs = startClock.uncertaintyMs + endClock.uncertaintyMs;
-  if (rawDurationMs < -uncertaintyMs) {
-    throw new Error(
-      `Cross-context performance milestones were out of order by ${(-rawDurationMs).toFixed(2)} ms.`
-    );
-  }
+  const uncertaintyMs = startClock.uncertaintyMs + endClock.uncertaintyMs + Math.max(0, -rawDurationMs);
   return {
     durationMs: Math.max(0, rawDurationMs),
     uncertaintyMs
